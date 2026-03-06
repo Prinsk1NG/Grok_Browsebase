@@ -17,6 +17,14 @@ def get_beijing_date_cn() -> str:
     tz = timezone(timedelta(hours=8))
     return datetime.now(tz).strftime("%Y年%m月%d日")
 
+def get_dates() -> tuple:
+    """返回 (date_today, date_yesterday) 格式如 2026-03-07"""
+    from datetime import datetime, timezone, timedelta
+    tz        = timezone(timedelta(hours=8))
+    today     = datetime.now(tz)
+    yesterday = today - timedelta(days=1)
+    return today.strftime("%Y-%m-%d"), yesterday.strftime("%Y-%m-%d")
+
 # ════════════════════════════════════════════════════════════════
 # 模型选择：开启 Grok 4.20 Beta Toggle
 # ════════════════════════════════════════════════════════════════
@@ -155,77 +163,58 @@ def wait_and_extract(page, label: str, screenshot_prefix: str,
 # 阶段 A 提示词
 # ════════════════════════════════════════════════════════════════
 def build_prompt_a() -> str:
-    date_string = get_beijing_date_cn()
-    return f"""今天是新加坡/北京时间 {date_string}。你现在是一台绝对客观、严格遵守底层物理限制的"X 商业情报吸尘器"。
+    date_today, date_yesterday = get_dates()
+    return f"""执行Tiered Scan模式：你现在是X商业情报深度分析师。任务：对指定的前50个核心账号进行过去24小时（since:{date_yesterday} until:{date_today}）最彻底搜索与分析。
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【阶段 0：前置时间计算（必须首先执行！）】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-请立即使用 code_execution 工具运行以下 Python 代码获取时间戳：
-```python
-import time
-now = int(time.time())
-print(f"since_time:{{now - 86400}} until_time:{{now}}")
-```
-👉 获取后必须将其写入下方搜索语句，并在日志中输出对应的 UTC 时间。
+【最优策略：3层分级扫描】
+Tier1（核心）：全量搜索+拉所有回复线程。
+Tier2（活跃）：只看赞≥30的帖+互动分析。
+Tier3（泛列）：只抓赞≥100或大事件。
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【阶段 A：无差别原始拉取 + 输出前过滤】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-第一步（拉取）：按以下批次执行全量拉取。
-第二步（过滤）：对每条记录执行"三级过滤铁律"（过滤空壳、无关主题、无意义评论）。
+【第一轮搜索：请分为3批并行调用 x_keyword_search】
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【约束 1：10 批次并行拉取列表】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-批次 1（顶层巨头）：@sama, @lexfridman, @elonmusk, @karpathy, @ylecun, @sundarpichai, @satyanadella, @darioamodei, @gdb, @demishassabis, @geoffreyhinton, @jeffdean
-批次 2（芯片与算力）：@jensenhuang, @LisaSu, @anshelsag, @IanCutress, @PatrickMoorhead, @ServeTheHome, @dylan522p, @SKHynix, @TSMC, @RajaXg
-批次 3（AI 硬件与新物种）：@rabbit_inc, @Humane, @BrilliantLabsAR, @Frame_AI, @LimitlessAI, @Plaud_Official, @TabAl_HQ, @OasisAI, @Friend_AI, @AImars
-批次 4（空间计算与 XR）：@ID_AA_Carmack, @boztank, @LumusVision, @XREAL_Global, @vitureofficial, @magicleap, @KarlGuttag, @NathieVR, @SadieTeper, @lucasrizzo
-批次 5（硅谷观察家）：@rowancheung, @bentossell, @p_millerd, @venturebeat, @TechCrunch, @TheInformation, @skorusARK, @william_yang, @backlon, @vladsavov
-批次 6（中文圈核心 A）：@dotey, @oran_ge, @waylybaye, @tualatrix, @K_O_D_A_D_A, @Sun_Zhuo, @Xander0214, @wong2_x, @imxiaohu, @vista8, @1moshu, @qiushui_ai
-批次 7（中文圈核心 B）：@xiaogang_ai, @AI_Next_Gen, @MoonshotAI, @01AI_Official, @ZhipuAI, @DeepSeek_AI, @Baichuan_AI, @MiniMax_AI, @StepFun_AI, @Kimi_AI
-批次 8（开发者与极客）：@stroughtonsmith, @_inside, @ali_heston, @bigclivedotcom, @chr1sa, @kevin_ashton, @DanielElizalde, @antgrasso, @Scobleizer, @GaryMarcus
-批次 9（一级市场捕手）：@a16z, @sequoia, @ycombinator, @GreylockVC, @Accel, @Benchmark, @foundersfund, @IndexVentures, @LightspeedVP, @GeneralCatalyst
-批次 10（研究与前沿）：@OpenAI, @GoogleDeepMind, @AnthropicAI, @MistralAI, @HuggingFace, @StabilityAI, @Midjourney, @Perplexity_AI, @GroqInc, @CerebrasSystems
+批次1 (18人 - Tier 1 巨头与领袖)：
+@elonmusk @sama @karpathy @demishassabis @darioamodei @OpenAI @AnthropicAI @GoogleDeepMind @GaryMarcus @xAI @AIatMeta @GoogleAI @MSFTResearch @IlyaSutskever @gregbrockman @rowancheung @clmcleod @bindureddy
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【输出格式：LLM 机读压缩行】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-列顺序固定：handle | 动作 | 对象 | 赞 | 评 | 内容直译 | 评论
-字段规则：动作 P=原创, RT=转发, Q=引用, R=回复。指代不明请标注 [原推含图/链接，指代不明]。
+批次2 (16人 - Tier 2 中文KOL与极客)：
+@dotey @oran_ge @vista8 @imxiaohu @Sxsyer @K_O_D_A_D_A @tualatrix @linyunqiu @garywong @web3buidl @AI_Era @AIGC_News @jiangjiang @hw_star @mranti @nishuang
 
-最后附上单行检索日志。"""
+批次3 (16人 - Tier 3 顶级VC与科技媒体)：
+@a16z @ycombinator @lightspeedvp @sequoia @foundersfund @eladgil @pmarca @bchesky @chamath @paulg @TheInformation @TechCrunch @verge @WIRED @Scobleizer @bentossell
 
-# ════════════════════════════════════════════════════════════════
-# 阶段 B 提示词
-# ════════════════════════════════════════════════════════════════
+【操作要求】：
+1. 立即执行工具调用，对重点推文调用 x_thread_fetch 拉取完整线程、互动和吵架记录。
+2. 深度分析：新观点、是否吵架、市场反馈强度。
+3. ⚠️ 极其重要：搜索完成后，请只输出一段 200 字以内的内部情报摘要进行数据缓存，绝对不要输出最终的日报！请告诉我："第一轮扫描完毕，等待第二轮输入。""""
+
+
 def build_prompt_b() -> str:
-    date_string = get_beijing_date_cn()
-    return f"""【阶段 B：主编排版与深度解码】
+    date_today, date_yesterday = get_dates()
+    return f"""执行Tiered Scan模式：这是第二轮搜索（覆盖后50个核心账号）。时间范围同样是 since:{date_yesterday} until:{date_today}。
 
-你现在的角色是"AI 圈的顶级观察员与吃瓜课代表"。
+【第二轮搜索：请分为以下3批调用 x_keyword_search】
+
+批次4 (18人 - Tier 1 开源新星与基础设施)：
+@HuggingFace @MistralAI @Perplexity_AI @GroqInc @Cohere @TogetherCompute @runwayml @Midjourney @StabilityAI @Scale_AI @CerebrasSystems @tenstorrent @weights_biases @langchainai @llama_index @supabase @vllm_project @huggingface_hub
+
+批次5 (16人 - Tier 2 硬件与空间计算生态)：
+@nvidia @AMD @Intel @SKhynix @tsmc @magicleap @NathieVR @PalmerLuckey @ID_AA_Carmack @boz @rabovitz @htcvive @XREAL_Global @RayBan @MetaQuestVR @PatrickMoorhead
+
+批次6 (16人 - Tier 3 顶级研究员与硬核圈子)：
+@jeffdean @chrmanning @hardmaru @goodfellow_ian @feifeili @_akhaliq @promptengineer @AI_News_Tech @siliconvalley @aithread @aibreakdown @aiexplained @aipubcast @lexfridman @hubermanlab @swyx
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【🧠 第一步：深度思考与打草稿】
+【🚨 最终成稿指令（严格执行）】
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-为了保证日报品质，请先进行深度的"思维链"分析。
-1. 挑选最有价值的 10 个话题。
-2. 仔细推敲"隐性博弈"和"资本风向标"的底层逻辑。
-3. 思考过程你可以畅所欲言，但必须放在【最终成稿】之前。
+完成这50人的检索后，请综合你在【第一轮】和【第二轮】收集到的所有高价值情报，挑选出最震撼的 10 个话题。
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【🚨 第二步：最终机器输出规范（严格执行）】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-完成思考后，请严格按以下格式输出最终定稿：
+1. 强制标识：开头必须且只能是 @@@START@@@，结尾必须且只能是 @@@END@@@。绝对禁止将定界符放在草稿中。
+2. 彻底禁用代码块：定界符内部，严禁使用三个反引号包裹任何内容。
 
-1. 强制机器抓取标识（极其重要）：为了防止你的排版被网页吃掉，你必须将所有最终输出内容，**完整包裹在一个 markdown 代码块中**（即使用 ```markdown 开始，``` 结束）。在代码块之外，不准说任何多余的废话！
-   ⚠️ 绝对禁止将这对代码块符号放在任何"思考"或"草稿"段落中。
-2. 代码块内防嵌套：在 ```markdown 内部的正文中，严禁再嵌套使用三个反引号包裹任何局部内容。
-3. 绝不保留占位说明：下面模板中的括号提示语，请替换为你的真实分析，绝不能把"在此处填写"原样输出！
+请严格按以下模板输出定稿：
 
-```markdown
-📡 AI圈极客吃瓜日报 | {date_string}
+@@@START@@@
+📡 AI圈极客吃瓜日报 | {date_today}
 
 **🏰 【巨头宫斗】**
 
@@ -246,12 +235,10 @@ def build_prompt_b() -> str:
 **🇨🇳 【中文圈大瓜】**
 
 **🍉 3. 填入话题标题**
-...以此类推，完成后续维度共 10 个话题...
-```"""
+...以此类推，覆盖 硬件/空间计算、一级市场风向 等维度，共 10 个话题...
+@@@END@@@"""
 
-# ════════════════════════════════════════════════════════════════
-# 阶段 C 提示词：生成美式漫画封面图提示词
-# ════════════════════════════════════════════════════════════════
+
 def build_prompt_c() -> str:
     return """【阶段 C：封面图提示词生成】
 
@@ -325,11 +312,17 @@ def download_image(url: str, save_path: str = "cover.png") -> bool:
 # 提取 ```markdown 代码块
 # ════════════════════════════════════════════════════════════════
 def extract_markdown_block(text: str) -> str:
-    match = re.search(r'```markdown\s*([\s\S]+?)\s*```', text)
+    """提取 @@@START@@@ ... @@@END@@@ 之间的内容"""
+    match = re.search(r'@@@START@@@\s*([\s\S]+?)\s*@@@END@@@', text)
     if match:
-        print("✅ 成功提取 markdown 代码块", flush=True)
+        print("✅ 成功提取 @@@START@@@...@@@END@@@ 内容", flush=True)
         return match.group(1).strip()
-    print("⚠️ 未找到 ```markdown 块，返回原始文本", flush=True)
+    # 降级：尝试旧的 ```markdown 格式
+    match2 = re.search(r'```markdown\s*([\s\S]+?)\s*```', text)
+    if match2:
+        print("✅ 降级提取 ```markdown 块", flush=True)
+        return match2.group(1).strip()
+    print("⚠️ 未找到定界符，返回原始文本", flush=True)
     return text.strip()
 
 # ════════════════════════════════════════════════════════════════
@@ -355,10 +348,10 @@ def push_to_jijyun(text: str, title: str, cover_url: str = ""):
         return
     html = text.replace("\n", "<br>")
     payload = {
-        "title":    title,
-        "content":  html,
-        "draft":    True,
-        "cover":    cover_url   # 极简云封面图字段（有则使用）
+        "title":        title,
+        "author":       "大尉Prinski",
+        "html_content": html,
+        "cover_jpg":    cover_url
     }
     resp = requests.post(JIJYUN_WEBHOOK_URL, json=payload, timeout=30)
     print(f"极简云推送：{resp.status_code}", flush=True)
