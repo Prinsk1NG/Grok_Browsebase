@@ -329,6 +329,27 @@ def download_image(url: str, save_path: str = "cover.png") -> bool:
 # ════════════════════════════════════════════════════════════════
 # 提取 ```markdown 代码块
 # ════════════════════════════════════════════════════════════════
+def upload_to_imgse(image_path: str) -> str:
+    """上传本地图片到路过图床（imgse.com，国内可访问），返回永久公开 URL。失败返回空字符串。"""
+    if not os.path.exists(image_path):
+        print(f"[图床] ⚠️ 文件不存在：{image_path}", flush=True)
+        return ""
+    try:
+        with open(image_path, "rb") as f:
+            resp = requests.post(
+                "https://imgse.com/api/1/upload",
+                headers={"X-API-Key": "6d207e02198a847aa98d0a2a901485a5"},
+                files={"source": ("cover.jpg", f, "image/jpeg")},
+                timeout=30
+            )
+        resp.raise_for_status()
+        url = resp.json()["image"]["url"]
+        print(f"[图床] ✅ 路过图床 URL：{url}", flush=True)
+        return url
+    except Exception as e:
+        print(f"[图床] ❌ 路过图床上传失败：{e}", flush=True)
+        return ""
+
 def extract_markdown_block(text: str) -> str:
     """提取 @@@START@@@ ... @@@END@@@ 之间的内容"""
     match = re.search(r'@@@START@@@\s*([\s\S]+?)\s*@@@END@@@', text)
@@ -369,10 +390,10 @@ def push_to_jijyun(text: str, title: str, cover_url: str = ""):
         "title":        title,
         "author":       "大尉Prinski",
         "html_content": html,
-        "cover_jpg":    cover_url
+        "cover_jpg":    cover_url       # Telegraph 永久 URL，微信可直接抓取
     }
     resp = requests.post(JIJYUN_WEBHOOK_URL, json=payload, timeout=30)
-    print(f"极简云推送：{resp.status_code}", flush=True)
+    print(f"极简云推送：{resp.status_code} | {resp.text[:120]}", flush=True)
 
 # ════════════════════════════════════════════════════════════════
 # 主流程
@@ -440,13 +461,18 @@ def main():
             f"{get_beijing_date_cn()} AI圈极客吃瓜日报"
     print(f"\n标题：{title}", flush=True)
 
-    # Step 8：推送飞书
-    print("\n推送飞书...", flush=True)
-    push_to_feishu(final_markdown, cover_url)
+    # Step 8：上传封面图到 Telegraph（获取永久公开 URL）
+    telegraph_url   = upload_to_imgse("cover.png")
+    final_cover_url = telegraph_url if telegraph_url else cover_url
+    print(f"封面图最终 URL：{final_cover_url[:80] if final_cover_url else '无'}", flush=True)
 
-    # Step 9：推送极简云（附封面图）
+    # Step 9：推送飞书
+    print("\n推送飞书...", flush=True)
+    push_to_feishu(final_markdown, final_cover_url)
+
+    # Step 10：推送极简云（Telegraph 永久 URL → cover_jpg）
     print("推送极简云...", flush=True)
-    push_to_jijyun(final_markdown, title, cover_url)
+    push_to_jijyun(final_markdown, title, final_cover_url)
 
     print("\n🎉 全部完成！", flush=True)
 
