@@ -1,0 +1,51 @@
+name: Grok每日AI吃瓜日报
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # UTC 01:00 = 北京时间 09:00，每天自动触发
+  workflow_dispatch:        # 支持手动触发
+
+permissions:
+  contents: read
+
+jobs:
+  run-grok-auto-task:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60     # 整个任务最多跑 60 分钟
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: ''
+
+      - name: 安装依赖
+        run: |
+          pip install browserbase playwright requests
+          playwright install chromium --with-deps
+
+      - name: 运行 Grok 主任务
+        env:
+          BROWSERBASE_API_KEY:    ${{ secrets.BROWSERBASE_API_KEY }}
+          BROWSERBASE_PROJECT_ID: ${{ secrets.BROWSERBASE_PROJECT_ID }}
+          BROWSERBASE_CONTEXT_ID: ${{ secrets.BROWSERBASE_CONTEXT_ID }}
+          JIJYUN_WEBHOOK_URL:     ${{ secrets.JIJYUN_WEBHOOK_URL }}
+          FEISHU_WEBHOOK_URL:     ${{ secrets.FEISHU_WEBHOOK_URL }}
+          KIMI_API_KEY:           ${{ secrets.KIMI_API_KEY }}
+          XAI_API_KEY:            ${{ secrets.XAI_API_KEY }}
+        run: python grok_auto_task.py
+
+      - name: 上传调试截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grok-screenshots-${{ github.run_number }}
+          path: |
+            00_initial.png
+            01_stage_a_done.png
+            02_stage_b_done.png
+          if-no-files-found: ignore
