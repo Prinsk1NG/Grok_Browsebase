@@ -175,10 +175,11 @@ def wait_and_extract(page, label: str, screenshot_prefix: str,
             last_len = cur_len
 
     if extend_if_growing:
-        print(f"[{label}] ⏳ 到达 {max_wait}s，仍在生成，每 5s 延长...", flush=True)
+        print(f"[{label}] ⏳ 到达 {max_wait}s，仍在生成，每 5s 延长（最多 300s）...", flush=True)
         prev_len  = last_len
         ext_count = 0
-        while True:
+        max_ext   = 60   # 60 × 5s = 300s 上限，防止无限等待
+        while ext_count < max_ext:
             time.sleep(5)
             text    = _get_last_msg(page)
             cur_len = len(text.strip())
@@ -188,6 +189,8 @@ def wait_and_extract(page, label: str, screenshot_prefix: str,
                 print(f"[{label}] ✅ 已停止生成，取结果", flush=True)
                 break
             prev_len = cur_len
+        else:
+            print(f"[{label}] ⚠️ 延长 300s 到达上限，强制取结果", flush=True)
         page.screenshot(path=f"{screenshot_prefix}_done.png")
         return text.strip()
     else:
@@ -487,9 +490,9 @@ def main():
 
     bb = Browserbase(api_key=BROWSERBASE_API_KEY)
 
-    session_opts = {"projectId": BROWSERBASE_PROJECT_ID}
+    session_opts = {"project_id": BROWSERBASE_PROJECT_ID}
     if BROWSERBASE_CONTEXT_ID:
-        session_opts["browserSettings"] = {
+        session_opts["browser_settings"] = {
             "context": {"id": BROWSERBASE_CONTEXT_ID, "persist": True}
         }
 
@@ -528,6 +531,8 @@ def main():
 
         # Step 4：阶段 B（第二轮扫描 + 成稿）
         send_prompt(page, build_prompt_b(), "阶段B", "04_stage_b")
+        print("[阶段B] ⏳ 强制等待 60s，等待工具调用启动...", flush=True)
+        time.sleep(60)
         raw_b_text = wait_and_extract(page, "阶段B", "04_stage_b",
                                       interval=5, stable_rounds=3, max_wait=200,
                                       extend_if_growing=True, min_len=1000)
@@ -543,7 +548,9 @@ def main():
         title_match  = re.search(r"TITLE[:：]\s*(.+)", cover_raw)
         prompt_match = re.search(r"PROMPT[:：]\s*([\s\S]+)", cover_raw)
         cover_title_c = title_match.group(1).strip()  if title_match  else ""
-        cover_prompt  = prompt_match.group(1).strip() if prompt_match else cover_raw.split("\n")[-1].strip()
+        cover_prompt  = prompt_match.group(1).strip() if prompt_match else ""
+        if not cover_prompt:
+            print("[阶段C] ⚠️ 未找到 PROMPT:，封面图跳过生成", flush=True)
         print(f"\n[阶段C] 动态标题：{cover_title_c}", flush=True)
         print(f"[阶段C] 封面图提示词：{cover_prompt[:100]}...", flush=True)
 
