@@ -165,6 +165,8 @@ def wait_and_extract(page, label: str, screenshot_prefix: str,
 # ════════════════════════════════════════════════════════════════
 def build_prompt_a() -> str:
     date_today, date_yesterday = get_dates()
+    # ✅ 修复：末尾引号单独成行，避免 \"" + """ 引发 SyntaxError
+    ending = '"第一轮扫描完毕，等待第二轮输入。"'
     return f"""执行Tiered Scan模式：你现在是X商业情报深度分析师。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -202,7 +204,7 @@ Tier3（泛列）：只抓赞≥100或大事件。
 1. 立即执行工具调用，对重点推文调用 x_thread_fetch 拉取完整线程、互动和吵架记录。
 2. 深度分析：新观点、是否吵架、市场反馈强度。
 3. 🚨 Fallback 强制规则：若带 since_time/until_time 的搜索返回 0 条结果，必须立即去掉时间参数重试同一批次，使用最近可用的帖文，绝对不可以停止或报错。
-4. ⚠️ 极其重要：搜索完成后，请只输出一段 200 字以内的内部情报摘要进行数据缓存，绝对不要输出最终的日报！请告诉我："第一轮扫描完毕，等待第二轮输入。""""
+4. ⚠️ 极其重要：搜索完成后，请只输出一段 200 字以内的内部情报摘要进行数据缓存，绝对不要输出最终的日报！请告诉我：{ending}"""
 
 # ════════════════════════════════════════════════════════════════
 # 阶段 B 提示词
@@ -400,7 +402,7 @@ def push_to_jijyun(text: str, title: str, cover_url: str = ""):
         "title":        title,
         "author":       "大尉Prinski",
         "html_content": html,
-        "cover_jpg":    cover_url  # 路过图床永久 URL，微信可直接抓取
+        "cover_jpg":    cover_url
     }
     resp = requests.post(JIJYUN_WEBHOOK_URL, json=payload, timeout=30)
     print(f"极简云推送：{resp.status_code} | {resp.text[:120]}", flush=True)
@@ -435,7 +437,7 @@ def main():
 
     bb = Browserbase(api_key=BROWSERBASE_API_KEY)
 
-    # ✅ 修复：使用 Python SDK 的 snake_case 参数名
+    # ✅ 修复1：使用 Python SDK 的 snake_case 参数名
     session_opts = {"project_id": BROWSERBASE_PROJECT_ID}
     if BROWSERBASE_CONTEXT_ID:
         session_opts["browser_settings"] = {
@@ -467,7 +469,7 @@ def main():
         # Step 2：开启 Grok 4.20 Beta
         enable_grok4_beta(page)
 
-        # Step 3：阶段 A（第一轮扫描，50个账号前半段）
+        # Step 3：阶段 A（第一轮扫描）
         send_prompt(page, build_prompt_a(), "阶段A", "03_stage_a")
         wait_and_extract(page, "阶段A", "03_stage_a",
                          interval=3, stable_rounds=4, max_wait=120,
