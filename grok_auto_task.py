@@ -5,20 +5,21 @@ import requests
 from browserbase import Browserbase
 from playwright.sync_api import sync_playwright
 
+# ── 环境变量 ─────────────────────────────────────────────────────
 BROWSERBASE_API_KEY    = os.getenv("BROWSERBASE_API_KEY", "")
 BROWSERBASE_PROJECT_ID = os.getenv("BROWSERBASE_PROJECT_ID", "")
 BROWSERBASE_CONTEXT_ID = os.getenv("BROWSERBASE_CONTEXT_ID", "")
 JIJYUN_WEBHOOK_URL     = os.getenv("JIJYUN_WEBHOOK_URL", "")
 FEISHU_WEBHOOK_URL     = os.getenv("FEISHU_WEBHOOK_URL", "")
-SF_API_KEY             = os.getenv("SF_API_KEY", "")   # 硅基流动
+SF_API_KEY             = os.getenv("SF_API_KEY", "")          # 硅基流动生图
 
+# ── 日期工具 ─────────────────────────────────────────────────────
 def get_beijing_date_cn() -> str:
     from datetime import datetime, timezone, timedelta
     tz = timezone(timedelta(hours=8))
     return datetime.now(tz).strftime("%Y年%m月%d日")
 
 def get_dates() -> tuple:
-    """返回 (date_today, date_yesterday) 格式如 2026-03-07"""
     from datetime import datetime, timezone, timedelta
     tz        = timezone(timedelta(hours=8))
     today     = datetime.now(tz)
@@ -131,7 +132,7 @@ def wait_and_extract(page, label: str, screenshot_prefix: str,
         if cur_len == last_len and cur_len > 0:
             stable += 1
             if stable >= stable_rounds:
-                print(f"[{label}] ✅ 回复完毕", flush=True)
+                print(f"[{label}] ✅ 回复完毕（连续 {stable_rounds} 次稳定）", flush=True)
                 page.screenshot(path=f"{screenshot_prefix}_done.png")
                 return text.strip()
         else:
@@ -200,15 +201,22 @@ Tier3（泛列）：只抓赞≥100或大事件。
 【操作要求】：
 1. 立即执行工具调用，对重点推文调用 x_thread_fetch 拉取完整线程、互动和吵架记录。
 2. 深度分析：新观点、是否吵架、市场反馈强度。
-3. ⚠️ 极其重要：搜索完成后，请只输出一段 200 字以内的内部情报摘要进行数据缓存，绝对不要输出最终的日报！请告诉我："第一轮扫描完毕，等待第二轮输入。\""""
+3. 🚨 Fallback 强制规则：若带 since_time/until_time 的搜索返回 0 条结果，必须立即去掉时间参数重试同一批次，使用最近可用的帖文，绝对不可以停止或报错。
+4. ⚠️ 极其重要：搜索完成后，请只输出一段 200 字以内的内部情报摘要进行数据缓存，绝对不要输出最终的日报！请告诉我："第一轮扫描完毕，等待第二轮输入。\""""
 
 
+# ════════════════════════════════════════════════════════════════
+# 阶段 B 提示词
+# ════════════════════════════════════════════════════════════════
 def build_prompt_b() -> str:
     date_today, date_yesterday = get_dates()
     return f"""执行Tiered Scan模式：这是第二轮搜索（覆盖后50个核心账号）。
 
 ⚠️ 时间范围：请复用第一轮 Step0 已计算好的 since_time / until_time 时间戳，
 不要重新计算，不要使用日期字符串。参考范围：{date_yesterday} → {date_today}。
+
+🚨 Fallback 强制规则：若带时间戳搜索返回 0 条结果，立即去掉 since_time/until_time 参数重试，
+使用最近可用帖文。严禁以"无法获取时间范围数据"为由停止输出——必须用现有数据完成日报。
 
 【第二轮搜索：请分为以下3批调用 x_keyword_search】
 
@@ -225,6 +233,7 @@ def build_prompt_b() -> str:
 【🚨 最终成稿指令（严格执行）】
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 完成这50人的检索后，请综合你在【第一轮】和【第二轮】收集到的所有高价值情报，挑选出最震撼的 10 个话题。
+⛔ 无论工具是否有时间限制，都必须输出完整日报。"无法获取数据"不是停止的理由——用你能搜到的最新帖文完成输出。
 
 1. 强制标识：开头必须且只能是 @@@START@@@，结尾必须且只能是 @@@END@@@。绝对禁止将定界符放在草稿中。
 2. 彻底禁用代码块：定界符内部，严禁使用三个反引号包裹任何内容。
@@ -257,6 +266,9 @@ def build_prompt_b() -> str:
 @@@END@@@"""
 
 
+# ════════════════════════════════════════════════════════════════
+# 阶段 C 提示词
+# ════════════════════════════════════════════════════════════════
 def build_prompt_c() -> str:
     return """【阶段 C：标题 + 封面图提示词生成】
 
@@ -284,7 +296,8 @@ def build_prompt_c() -> str:
 TITLE: <中文标题>
 PROMPT: <英文提示词>
 
-⚠️ 只输出纯文字，不要生成图片，不要调用任何工具。"""
+⚠️ 只输出纯文字，不要生成图片，不要调用任何工具，直接返回文本即可。"""
+
 
 # ════════════════════════════════════════════════════════════════
 # 调用硅基流动 SiliconFlow API 生图
@@ -294,10 +307,11 @@ def generate_cover_image(prompt: str) -> str:
     if not SF_API_KEY:
         print("⚠️ SF_API_KEY 未配置，跳过生图", flush=True)
         return ""
-
+    if not prompt:
+        print("⚠️ 封面图提示词为空，跳过生图", flush=True)
+        return ""
     print("\n[生图] 调用硅基流动 FLUX.1-schnell 生成封面图...", flush=True)
     print(f"[生图] 提示词：{prompt[:120]}...", flush=True)
-
     try:
         resp = requests.post(
             "https://api.siliconflow.cn/v1/images/generations",
@@ -320,23 +334,29 @@ def generate_cover_image(prompt: str) -> str:
     except Exception as e:
         print(f"[生图] ❌ 生图失败：{e}", flush=True)
         return ""
+
+
+# ════════════════════════════════════════════════════════════════
+# 下载图片到本地
 # ════════════════════════════════════════════════════════════════
 def download_image(url: str, save_path: str = "cover.png") -> bool:
     if not url:
+        print("[下载] ⚠️ URL 为空，跳过下载", flush=True)
         return False
     try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
+        resp = requests.get(url, timeout=60)
+        resp.raise_for_status()
         with open(save_path, "wb") as f:
-            f.write(r.content)
-        print(f"[生图] ✅ 封面图已下载：{save_path}", flush=True)
+            f.write(resp.content)
+        print(f"[下载] ✅ 已保存到 {save_path}（{len(resp.content)//1024} KB）", flush=True)
         return True
     except Exception as e:
-        print(f"[生图] ⚠️ 下载失败：{e}", flush=True)
+        print(f"[下载] ❌ 下载失败：{e}", flush=True)
         return False
 
+
 # ════════════════════════════════════════════════════════════════
-# 提取 ```markdown 代码块
+# 上传图片到路过图床（国内永久 URL）
 # ════════════════════════════════════════════════════════════════
 def upload_to_imgse(image_path: str) -> str:
     """上传本地图片到路过图床（imgse.com，国内可访问），返回永久公开 URL。失败返回空字符串。"""
@@ -359,36 +379,24 @@ def upload_to_imgse(image_path: str) -> str:
         print(f"[图床] ❌ 路过图床上传失败：{e}", flush=True)
         return ""
 
-def extract_markdown_block(text: str) -> str:
-    """提取 @@@START@@@ ... @@@END@@@ 之间的内容"""
-    match = re.search(r'@@@START@@@\s*([\s\S]+?)\s*@@@END@@@', text)
-    if match:
-        print("✅ 成功提取 @@@START@@@...@@@END@@@ 内容", flush=True)
-        return match.group(1).strip()
-    # 降级：尝试旧的 ```markdown 格式
-    match2 = re.search(r'```markdown\s*([\s\S]+?)\s*```', text)
-    if match2:
-        print("✅ 降级提取 ```markdown 块", flush=True)
-        return match2.group(1).strip()
-    print("⚠️ 未找到定界符，返回原始文本", flush=True)
-    return text.strip()
 
 # ════════════════════════════════════════════════════════════════
-# 推送：飞书（附带封面图 URL）
+# 推送飞书
 # ════════════════════════════════════════════════════════════════
 def push_to_feishu(text: str, cover_url: str = ""):
     if not FEISHU_WEBHOOK_URL:
         print("⚠️ FEISHU_WEBHOOK_URL 未配置，跳过", flush=True)
         return
-    msg = text[:3800]
+    msg = text
     if cover_url:
         msg = f"🖼️ 封面图：{cover_url}\n\n{msg}"
     payload = {"msg_type": "text", "content": {"text": msg}}
     resp = requests.post(FEISHU_WEBHOOK_URL, json=payload, timeout=30)
-    print(f"飞书推送：{resp.status_code}", flush=True)
+    print(f"飞书推送：{resp.status_code} | {resp.text[:80]}", flush=True)
+
 
 # ════════════════════════════════════════════════════════════════
-# 推送：极简云（正文 + 封面图 URL）
+# 推送极简云（微信公众号）
 # ════════════════════════════════════════════════════════════════
 def push_to_jijyun(text: str, title: str, cover_url: str = ""):
     if not JIJYUN_WEBHOOK_URL:
@@ -404,71 +412,115 @@ def push_to_jijyun(text: str, title: str, cover_url: str = ""):
     resp = requests.post(JIJYUN_WEBHOOK_URL, json=payload, timeout=30)
     print(f"极简云推送：{resp.status_code} | {resp.text[:120]}", flush=True)
 
+
+# ════════════════════════════════════════════════════════════════
+# 提取 @@@START@@@ ... @@@END@@@ 之间的正文
+# ════════════════════════════════════════════════════════════════
+def extract_markdown_block(text: str) -> str:
+    start = text.find("@@@START@@@")
+    end   = text.find("@@@END@@@")
+    if start != -1 and end != -1 and end > start:
+        return text[start + len("@@@START@@@"):end].strip()
+    return ""
+
+
+# ════════════════════════════════════════════════════════════════
+# 内容质量检查
+# ════════════════════════════════════════════════════════════════
+def is_valid_content(text: str) -> bool:
+    """判断日报内容是否有效（非空、包含标识符、字数足够）"""
+    if not text or len(text) < 500:
+        return False
+    required = ["@@@START@@@", "@@@END@@@", "🍉"]
+    return all(kw in text for kw in required)
+
+
 # ════════════════════════════════════════════════════════════════
 # 主流程
 # ════════════════════════════════════════════════════════════════
 def main():
-    if not BROWSERBASE_CONTEXT_ID:
-        print("❌ 未找到 BROWSERBASE_CONTEXT_ID，请先配置 GitHub Secrets", flush=True)
-        raise SystemExit(1)
+    print("=" * 60, flush=True)
+    print(f"🚀 AI吃瓜日报自动化任务启动", flush=True)
+    print("=" * 60, flush=True)
 
-    print("\n初始化 Browserbase 会话...", flush=True)
-    client  = Browserbase(api_key=BROWSERBASE_API_KEY)
-    session = client.sessions.create(
-        project_id=BROWSERBASE_PROJECT_ID,
-        browser_settings={"context": {"id": BROWSERBASE_CONTEXT_ID, "persist": True}}
-    )
-    print(f"会话 ID：{session.id}", flush=True)
+    bb = Browserbase(api_key=BROWSERBASE_API_KEY)
 
-    with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(session.connect_url)
-        ctx     = browser.contexts[0]
-        page    = ctx.new_page()
+    session_opts = {"projectId": BROWSERBASE_PROJECT_ID}
+    if BROWSERBASE_CONTEXT_ID:
+        session_opts["browserSettings"] = {
+            "context": {"id": BROWSERBASE_CONTEXT_ID, "persist": True}
+        }
+
+    session    = bb.sessions.create(**session_opts)
+    session_id = session.id
+    print(f"Session ID: {session_id}", flush=True)
+
+    raw_b_text   = ""
+    cover_prompt = ""
+    cover_title_c = ""
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.connect_over_cdp(
+            f"wss://connect.browserbase.com?apiKey={BROWSERBASE_API_KEY}"
+            f"&sessionId={session_id}"
+        )
+        context = browser.contexts[0]
+        page    = context.pages[0] if context.pages else context.new_page()
 
         # Step 1：打开 Grok
-        print("\n[Step 1] 打开 grok.com...", flush=True)
-        page.goto("https://grok.com/", wait_until="domcontentloaded", timeout=60000)
+        print("\n打开 grok.com...", flush=True)
+        page.goto("https://grok.com", wait_until="domcontentloaded", timeout=60000)
         time.sleep(3)
         page.screenshot(path="00_opened.png")
 
-        # Step 2：开启 Grok 4.2 Beta
+        # Step 2：开启 Grok 4.20 Beta
         enable_grok4_beta(page)
 
-        # Step 3：阶段 A（最长 120s）
+        # Step 3：阶段 A（第一轮扫描，50个账号前半段）
         send_prompt(page, build_prompt_a(), "阶段A", "03_stage_a")
         wait_and_extract(page, "阶段A", "03_stage_a",
                          interval=3, stable_rounds=4, max_wait=120,
-                         extend_if_growing=False)
+                         extend_if_growing=True)
 
-        # Step 4：阶段 B（最长 200s，超时若仍在吐字则延长）
+        # Step 4：阶段 B（第二轮扫描 + 成稿）
         send_prompt(page, build_prompt_b(), "阶段B", "04_stage_b")
-        raw_b = wait_and_extract(page, "阶段B", "04_stage_b",
-                                  interval=3, stable_rounds=4, max_wait=200,
-                                  extend_if_growing=True)
-        final_markdown = extract_markdown_block(raw_b)
-        print(f"\n阶段B 内容长度：{len(final_markdown)} 字符", flush=True)
+        raw_b_text = wait_and_extract(page, "阶段B", "04_stage_b",
+                                      interval=5, stable_rounds=3, max_wait=200,
+                                      extend_if_growing=True)
+        print(f"\n阶段B 内容长度：{len(raw_b_text)} 字符", flush=True)
 
-        # Step 5：阶段 C（生成封面图提示词，最长 60s，轻量快速）
+        # Step 5：阶段 C（标题 + 封面图提示词）
         send_prompt(page, build_prompt_c(), "阶段C", "05_stage_c")
-        cover_prompt_raw = wait_and_extract(page, "阶段C", "05_stage_c",
-                                             interval=3, stable_rounds=3, max_wait=60,
-                                             extend_if_growing=False)
-        # 从 TITLE:/PROMPT: 格式中分别解析
-        raw = cover_prompt_raw.strip()
-        title_c_match  = re.search(r"TITLE[:：]\s*(.+)", raw)
-        prompt_c_match = re.search(r"PROMPT[:：]\s*([\s\S]+)", raw)
-        cover_title_c  = title_c_match.group(1).strip()  if title_c_match  else ""
-        cover_prompt   = prompt_c_match.group(1).strip() if prompt_c_match else raw.split("\n")[-1].strip()
+        cover_raw = wait_and_extract(page, "阶段C", "05_stage_c",
+                                     interval=3, stable_rounds=3, max_wait=60,
+                                     extend_if_growing=False)
+
+        # 解析 TITLE / PROMPT
+        title_match  = re.search(r"TITLE[:：]\s*(.+)", cover_raw)
+        prompt_match = re.search(r"PROMPT[:：]\s*([\s\S]+)", cover_raw)
+        cover_title_c = title_match.group(1).strip()  if title_match  else ""
+        cover_prompt  = prompt_match.group(1).strip() if prompt_match else cover_raw.split("\n")[-1].strip()
         print(f"\n[阶段C] 动态标题：{cover_title_c}", flush=True)
         print(f"[阶段C] 封面图提示词：{cover_prompt[:100]}...", flush=True)
 
         browser.close()
 
-    # Step 6：调用硅基流动 FLUX 生图（Browserbase Session 已关闭，节省时间）
+    # ── 内容质量守卫 ─────────────────────────────────────────────
+    final_markdown = extract_markdown_block(raw_b_text)
+
+    if not is_valid_content(raw_b_text if not final_markdown else final_markdown):
+        print("\n❌ 日报内容质量不达标（内容过短或缺少标识符），终止推送。", flush=True)
+        print(f"   原始内容前200字：{raw_b_text[:200]}", flush=True)
+        raise SystemExit(1)
+
+    if not final_markdown:
+        final_markdown = raw_b_text   # 没有定界符时用全文兜底
+
+    # ── Step 6：硅基流动生图 ────────────────────────────────────
     cover_url = generate_cover_image(cover_prompt)
     download_image(cover_url, "cover.png")
 
-    # Step 7：标题优先用阶段C动态标题，fallback 正文标题
+    # ── Step 7：标题（优先阶段C动态标题，fallback 正文标题）────
     if cover_title_c:
         title = f"{get_beijing_date_cn()} | {cover_title_c}"
     else:
@@ -477,20 +529,21 @@ def main():
                 f"{get_beijing_date_cn()} AI圈极客吃瓜日报"
     print(f"\n标题：{title}", flush=True)
 
-    # Step 8：上传封面图到路过图床（获取永久公开 URL）
+    # ── Step 8：上传封面图到路过图床 ────────────────────────────
     imgse_url       = upload_to_imgse("cover.png")
     final_cover_url = imgse_url if imgse_url else cover_url
     print(f"封面图最终 URL：{final_cover_url[:80] if final_cover_url else '无'}", flush=True)
 
-    # Step 9：推送飞书
+    # ── Step 9：推送飞书 ─────────────────────────────────────────
     print("\n推送飞书...", flush=True)
     push_to_feishu(final_markdown, final_cover_url)
 
-    # Step 10：推送极简云（路过图床永久 URL → cover_jpg）
+    # ── Step 10：推送极简云（微信公众号）───────────────────────
     print("推送极简云...", flush=True)
     push_to_jijyun(final_markdown, title, final_cover_url)
 
     print("\n🎉 全部完成！", flush=True)
+
 
 if __name__ == "__main__":
     main()
