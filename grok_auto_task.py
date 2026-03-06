@@ -11,7 +11,7 @@ BROWSERBASE_PROJECT_ID = os.getenv("BROWSERBASE_PROJECT_ID", "")
 BROWSERBASE_CONTEXT_ID = os.getenv("BROWSERBASE_CONTEXT_ID", "")
 JIJYUN_WEBHOOK_URL     = os.getenv("JIJYUN_WEBHOOK_URL", "")
 FEISHU_WEBHOOK_URL     = os.getenv("FEISHU_WEBHOOK_URL", "")
-SF_API_KEY             = os.getenv("SF_API_KEY", "")  # 硅基流动生图
+SF_API_KEY             = os.getenv("SF_API_KEY", "")          # 硅基流动生图
 
 # ── 日期工具 ─────────────────────────────────────────────────────
 def get_beijing_date_cn() -> str:
@@ -21,7 +21,7 @@ def get_beijing_date_cn() -> str:
 
 def get_dates() -> tuple:
     from datetime import datetime, timezone, timedelta
-    tz = timezone(timedelta(hours=8))
+    tz        = timezone(timedelta(hours=8))
     today     = datetime.now(tz)
     yesterday = today - timedelta(days=1)
     return today.strftime("%Y-%m-%d"), yesterday.strftime("%Y-%m-%d")
@@ -47,7 +47,7 @@ def enable_grok4_beta(page):
         is_on = page.evaluate("""() => {
             const sw = document.querySelector("button[role='switch']");
             if (sw) return sw.getAttribute('aria-checked') === 'true' ||
-                         sw.getAttribute('data-state') === 'checked';
+                          sw.getAttribute('data-state') === 'checked';
             const cb = document.querySelector("input[type='checkbox']");
             return cb ? cb.checked : false;
         }""")
@@ -93,13 +93,44 @@ def send_prompt(page, prompt_text: str, label: str, screenshot_prefix: str):
     time.sleep(1.5)
     page.screenshot(path=f"{screenshot_prefix}_before.png")
 
-    send_btn = page.wait_for_selector(
-        "button[aria-label='Submit']:not([disabled]), "
-        "button[aria-label='Send message']:not([disabled]), "
-        "button[type='submit']:not([disabled])",
-        timeout=15000
-    )
-    send_btn.click()
+    # 先点一下输入框激活，确保按钮变为可见状态
+    try:
+        inp = page.query_selector("div[contenteditable='true'], textarea")
+        if inp:
+            inp.click()
+            time.sleep(0.5)
+    except Exception:
+        pass
+
+    # 尝试正常点击发送按钮（timeout 延长到 30s）
+    clicked = False
+    try:
+        send_btn = page.wait_for_selector(
+            "button[aria-label='Submit']:not([disabled]), "
+            "button[aria-label='Send message']:not([disabled]), "
+            "button[type='submit']:not([disabled])",
+            timeout=30000,
+            state="visible"
+        )
+        send_btn.click()
+        clicked = True
+    except Exception as e:
+        print(f"[{label}] ⚠️ 常规点击失败（{e}），尝试 JS 点击...", flush=True)
+
+    # JS 兜底：直接强制点击提交按钮
+    if not clicked:
+        result = page.evaluate("""() => {
+            const btn = document.querySelector("button[type='submit']")
+                     || document.querySelector("button[aria-label='Submit']")
+                     || document.querySelector("button[aria-label='Send message']");
+            if (btn) { btn.click(); return true; }
+            return false;
+        }""")
+        if result:
+            print(f"[{label}] ✅ JS 兜底点击成功", flush=True)
+        else:
+            raise RuntimeError(f"[{label}] ❌ 找不到发送按钮，流程中止")
+
     print(f"[{label}] ✅ 已发送", flush=True)
     time.sleep(5)
 
@@ -116,8 +147,12 @@ def _get_last_msg(page) -> str:
 
 def wait_and_extract(page, label: str, screenshot_prefix: str,
                      interval: int = 3, stable_rounds: int = 4,
-                     max_wait: int = 120, extend_if_growing: bool = False) -> str:
-    print(f"[{label}] 等待回复（最长 {max_wait}s）...", flush=True)
+                     max_wait: int = 120, extend_if_growing: bool = False,
+                     min_len: int = 80) -> str:
+    """
+    min_len: 内容至少达到此长度才允许触发"稳定"判定，防止 Grok 初始短文本被误判为完成。
+    """
+    print(f"[{label}] 等待回复（最长 {max_wait}s，最小有效长度 {min_len}）...", flush=True)
     last_len = -1
     stable   = 0
     elapsed  = 0
@@ -129,10 +164,10 @@ def wait_and_extract(page, label: str, screenshot_prefix: str,
         cur_len = len(text.strip())
         print(f"  {elapsed}s | 字符数: {cur_len}", flush=True)
 
-        if cur_len == last_len and cur_len > 0:
+        if cur_len == last_len and cur_len >= min_len:
             stable += 1
             if stable >= stable_rounds:
-                print(f"[{label}] ✅ 回复完毕（连续 {stable_rounds} 次稳定）", flush=True)
+                print(f"[{label}] ✅ 回复完毕（连续 {stable_rounds} 次稳定，{cur_len} 字符）", flush=True)
                 page.screenshot(path=f"{screenshot_prefix}_done.png")
                 return text.strip()
         else:
@@ -165,8 +200,6 @@ def wait_and_extract(page, label: str, screenshot_prefix: str,
 # ════════════════════════════════════════════════════════════════
 def build_prompt_a() -> str:
     date_today, date_yesterday = get_dates()
-    # ✅ 修复：末尾引号单独成行，避免 \"" + """ 引发 SyntaxError
-    ending = '"第一轮扫描完毕，等待第二轮输入。"'
     return f"""执行Tiered Scan模式：你现在是X商业情报深度分析师。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -176,11 +209,11 @@ def build_prompt_a() -> str:
 import time
 now = int(time.time())
 since_ts = now - 86400
-print(f"since_time:{{since_ts}} until_time:{{now}}")
+print(f"since_time:{{since_ts}}  until_time:{{now}}")
 
 👉 在后续所有 x_keyword_search 调用中，必须使用上面输出的
-since_time 和 until_time 参数（整数时间戳），不要使用日期字符串。
-参考时间范围：北京时间 {date_yesterday} → {date_today}
+   since_time 和 until_time 参数（整数时间戳），不要使用日期字符串。
+   参考时间范围：北京时间 {date_yesterday} → {date_today}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 【最优策略：3层分级扫描】
@@ -204,7 +237,8 @@ Tier3（泛列）：只抓赞≥100或大事件。
 1. 立即执行工具调用，对重点推文调用 x_thread_fetch 拉取完整线程、互动和吵架记录。
 2. 深度分析：新观点、是否吵架、市场反馈强度。
 3. 🚨 Fallback 强制规则：若带 since_time/until_time 的搜索返回 0 条结果，必须立即去掉时间参数重试同一批次，使用最近可用的帖文，绝对不可以停止或报错。
-4. ⚠️ 极其重要：搜索完成后，请只输出一段 200 字以内的内部情报摘要进行数据缓存，绝对不要输出最终的日报！请告诉我：{ending}"""
+4. ⚠️ 极其重要：搜索完成后，请只输出一段 200 字以内的内部情报摘要进行数据缓存，绝对不要输出最终的日报！请告诉我："第一轮扫描完毕，等待第二轮输入。\""""
+
 
 # ════════════════════════════════════════════════════════════════
 # 阶段 B 提示词
@@ -237,7 +271,8 @@ def build_prompt_b() -> str:
 ⛔ 无论工具是否有时间限制，都必须输出完整日报。"无法获取数据"不是停止的理由——用你能搜到的最新帖文完成输出。
 
 1. 强制标识：开头必须且只能是 @@@START@@@，结尾必须且只能是 @@@END@@@。绝对禁止将定界符放在草稿中。
-2. 彻底禁用代码块：定界符内部，严禁使用三个反引号包裹任何内容。
+2. @@@END@@@ 必须是你输出的最后一行，单独成行，其后不得有任何文字、空格或说明。
+3. 彻底禁用代码块：定界符内部，严禁使用三个反引号包裹任何内容。
 
 请严格按以下模板输出定稿：
 
@@ -265,6 +300,7 @@ def build_prompt_b() -> str:
 **🍉 3. 填入话题标题**
 ...以此类推，覆盖 硬件/空间计算、一级市场风向 等维度，共 10 个话题...
 @@@END@@@"""
+
 
 # ════════════════════════════════════════════════════════════════
 # 阶段 C 提示词
@@ -298,6 +334,7 @@ PROMPT: <英文提示词>
 
 ⚠️ 只输出纯文字，不要生成图片，不要调用任何工具，直接返回文本即可。"""
 
+
 # ════════════════════════════════════════════════════════════════
 # 调用硅基流动 SiliconFlow API 生图
 # ════════════════════════════════════════════════════════════════
@@ -319,9 +356,9 @@ def generate_cover_image(prompt: str) -> str:
                 "Content-Type": "application/json"
             },
             json={
-                "model": "black-forest-labs/FLUX.1-schnell",
-                "prompt": prompt,
-                "n": 1,
+                "model":      "black-forest-labs/FLUX.1-schnell",
+                "prompt":     prompt,
+                "n":          1,
                 "image_size": "1280x720"
             },
             timeout=120
@@ -333,6 +370,7 @@ def generate_cover_image(prompt: str) -> str:
     except Exception as e:
         print(f"[生图] ❌ 生图失败：{e}", flush=True)
         return ""
+
 
 # ════════════════════════════════════════════════════════════════
 # 下载图片到本地
@@ -351,6 +389,7 @@ def download_image(url: str, save_path: str = "cover.png") -> bool:
     except Exception as e:
         print(f"[下载] ❌ 下载失败：{e}", flush=True)
         return False
+
 
 # ════════════════════════════════════════════════════════════════
 # 上传图片到路过图床（国内永久 URL）
@@ -376,6 +415,7 @@ def upload_to_imgse(image_path: str) -> str:
         print(f"[图床] ❌ 路过图床上传失败：{e}", flush=True)
         return ""
 
+
 # ════════════════════════════════════════════════════════════════
 # 推送飞书
 # ════════════════════════════════════════════════════════════════
@@ -390,6 +430,7 @@ def push_to_feishu(text: str, cover_url: str = ""):
     resp = requests.post(FEISHU_WEBHOOK_URL, json=payload, timeout=30)
     print(f"飞书推送：{resp.status_code} | {resp.text[:80]}", flush=True)
 
+
 # ════════════════════════════════════════════════════════════════
 # 推送极简云（微信公众号）
 # ════════════════════════════════════════════════════════════════
@@ -402,10 +443,11 @@ def push_to_jijyun(text: str, title: str, cover_url: str = ""):
         "title":        title,
         "author":       "大尉Prinski",
         "html_content": html,
-        "cover_jpg":    cover_url
+        "cover_jpg":    cover_url       # 路过图床永久 URL，微信可直接抓取
     }
     resp = requests.post(JIJYUN_WEBHOOK_URL, json=payload, timeout=30)
     print(f"极简云推送：{resp.status_code} | {resp.text[:120]}", flush=True)
+
 
 # ════════════════════════════════════════════════════════════════
 # 提取 @@@START@@@ ... @@@END@@@ 之间的正文
@@ -413,34 +455,41 @@ def push_to_jijyun(text: str, title: str, cover_url: str = ""):
 def extract_markdown_block(text: str) -> str:
     start = text.find("@@@START@@@")
     end   = text.find("@@@END@@@")
-    if start != -1 and end != -1 and end > start:
-        return text[start + len("@@@START@@@"):end].strip()
-    return ""
+    if start == -1:
+        return ""
+    content_start = start + len("@@@START@@@")
+    if end != -1 and end > start:
+        return text[content_start:end].strip()
+    # @@@END@@@ 缺失（被截断）：取 @@@START@@@ 之后的全部内容
+    print("⚠️ @@@END@@@ 未找到，使用 @@@START@@@ 之后的全文兜底", flush=True)
+    return text[content_start:].strip()
+
 
 # ════════════════════════════════════════════════════════════════
 # 内容质量检查
 # ════════════════════════════════════════════════════════════════
 def is_valid_content(text: str) -> bool:
-    """判断日报内容是否有效（非空、包含标识符、字数足够）"""
-    if not text or len(text) < 500:
+    """判断日报内容是否有效（非空、包含关键标识符、字数足够）"""
+    if not text or len(text) < 300:
         return False
-    required = ["@@@START@@@", "@@@END@@@", "🍉"]
+    # @@@END@@@ 可能因截断缺失，不作为硬性要求
+    required = ["@@@START@@@", "🍉"]
     return all(kw in text for kw in required)
+
 
 # ════════════════════════════════════════════════════════════════
 # 主流程
 # ════════════════════════════════════════════════════════════════
 def main():
     print("=" * 60, flush=True)
-    print("🚀 AI吃瓜日报自动化任务启动", flush=True)
+    print(f"🚀 AI吃瓜日报自动化任务启动", flush=True)
     print("=" * 60, flush=True)
 
     bb = Browserbase(api_key=BROWSERBASE_API_KEY)
 
-    # ✅ 修复1：使用 Python SDK 的 snake_case 参数名
-    session_opts = {"project_id": BROWSERBASE_PROJECT_ID}
+    session_opts = {"projectId": BROWSERBASE_PROJECT_ID}
     if BROWSERBASE_CONTEXT_ID:
-        session_opts["browser_settings"] = {
+        session_opts["browserSettings"] = {
             "context": {"id": BROWSERBASE_CONTEXT_ID, "persist": True}
         }
 
@@ -448,8 +497,8 @@ def main():
     session_id = session.id
     print(f"Session ID: {session_id}", flush=True)
 
-    raw_b_text    = ""
-    cover_prompt  = ""
+    raw_b_text   = ""
+    cover_prompt = ""
     cover_title_c = ""
 
     with sync_playwright() as pw:
@@ -469,17 +518,19 @@ def main():
         # Step 2：开启 Grok 4.20 Beta
         enable_grok4_beta(page)
 
-        # Step 3：阶段 A（第一轮扫描）
+        # Step 3：阶段 A（第一轮扫描，50个账号前半段）
         send_prompt(page, build_prompt_a(), "阶段A", "03_stage_a")
+        print("[阶段A] ⏳ 强制等待 90s，确保 Grok 工具调用完成...", flush=True)
+        time.sleep(90)
         wait_and_extract(page, "阶段A", "03_stage_a",
                          interval=3, stable_rounds=4, max_wait=120,
-                         extend_if_growing=True)
+                         extend_if_growing=True, min_len=100)
 
         # Step 4：阶段 B（第二轮扫描 + 成稿）
         send_prompt(page, build_prompt_b(), "阶段B", "04_stage_b")
         raw_b_text = wait_and_extract(page, "阶段B", "04_stage_b",
                                       interval=5, stable_rounds=3, max_wait=200,
-                                      extend_if_growing=True)
+                                      extend_if_growing=True, min_len=1000)
         print(f"\n阶段B 内容长度：{len(raw_b_text)} 字符", flush=True)
 
         # Step 5：阶段 C（标题 + 封面图提示词）
@@ -489,9 +540,9 @@ def main():
                                      extend_if_growing=False)
 
         # 解析 TITLE / PROMPT
-        title_match   = re.search(r"TITLE[:：]\s*(.+)", cover_raw)
-        prompt_match  = re.search(r"PROMPT[:：]\s*([\s\S]+)", cover_raw)
-        cover_title_c = title_match.group(1).strip() if title_match else ""
+        title_match  = re.search(r"TITLE[:：]\s*(.+)", cover_raw)
+        prompt_match = re.search(r"PROMPT[:：]\s*([\s\S]+)", cover_raw)
+        cover_title_c = title_match.group(1).strip()  if title_match  else ""
         cover_prompt  = prompt_match.group(1).strip() if prompt_match else cover_raw.split("\n")[-1].strip()
         print(f"\n[阶段C] 动态标题：{cover_title_c}", flush=True)
         print(f"[阶段C] 封面图提示词：{cover_prompt[:100]}...", flush=True)
@@ -499,15 +550,15 @@ def main():
         browser.close()
 
     # ── 内容质量守卫 ─────────────────────────────────────────────
-    final_markdown = extract_markdown_block(raw_b_text)
-
-    if not is_valid_content(raw_b_text if not final_markdown else final_markdown):
+    # 始终用 raw_b_text 做质量判断（最完整），extract 结果仅用于推送
+    if not is_valid_content(raw_b_text):
         print("\n❌ 日报内容质量不达标（内容过短或缺少标识符），终止推送。", flush=True)
         print(f"   原始内容前200字：{raw_b_text[:200]}", flush=True)
         raise SystemExit(1)
 
+    final_markdown = extract_markdown_block(raw_b_text)
     if not final_markdown:
-        final_markdown = raw_b_text  # 没有定界符时用全文兜底
+        final_markdown = raw_b_text   # 实在提取不到定界符，用全文兜底
 
     # ── Step 6：硅基流动生图 ────────────────────────────────────
     cover_url = generate_cover_image(cover_prompt)
@@ -536,6 +587,7 @@ def main():
     push_to_jijyun(final_markdown, title, final_cover_url)
 
     print("\n🎉 全部完成！", flush=True)
+
 
 if __name__ == "__main__":
     main()
