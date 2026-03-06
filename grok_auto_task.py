@@ -11,7 +11,7 @@ BROWSERBASE_PROJECT_ID = os.getenv("BROWSERBASE_PROJECT_ID", "")
 BROWSERBASE_CONTEXT_ID = os.getenv("BROWSERBASE_CONTEXT_ID", "")
 JIJYUN_WEBHOOK_URL     = os.getenv("JIJYUN_WEBHOOK_URL", "")
 FEISHU_WEBHOOK_URL     = os.getenv("FEISHU_WEBHOOK_URL", "")
-SF_API_KEY             = os.getenv("SF_API_KEY", "")          # 硅基流动生图
+SF_API_KEY             = os.getenv("SF_API_KEY", "")  # 硅基流动生图
 
 # ── 日期工具 ─────────────────────────────────────────────────────
 def get_beijing_date_cn() -> str:
@@ -21,7 +21,7 @@ def get_beijing_date_cn() -> str:
 
 def get_dates() -> tuple:
     from datetime import datetime, timezone, timedelta
-    tz        = timezone(timedelta(hours=8))
+    tz = timezone(timedelta(hours=8))
     today     = datetime.now(tz)
     yesterday = today - timedelta(days=1)
     return today.strftime("%Y-%m-%d"), yesterday.strftime("%Y-%m-%d")
@@ -47,7 +47,7 @@ def enable_grok4_beta(page):
         is_on = page.evaluate("""() => {
             const sw = document.querySelector("button[role='switch']");
             if (sw) return sw.getAttribute('aria-checked') === 'true' ||
-                          sw.getAttribute('data-state') === 'checked';
+                         sw.getAttribute('data-state') === 'checked';
             const cb = document.querySelector("input[type='checkbox']");
             return cb ? cb.checked : false;
         }""")
@@ -174,11 +174,11 @@ def build_prompt_a() -> str:
 import time
 now = int(time.time())
 since_ts = now - 86400
-print(f"since_time:{{since_ts}}  until_time:{{now}}")
+print(f"since_time:{{since_ts}} until_time:{{now}}")
 
 👉 在后续所有 x_keyword_search 调用中，必须使用上面输出的
-   since_time 和 until_time 参数（整数时间戳），不要使用日期字符串。
-   参考时间范围：北京时间 {date_yesterday} → {date_today}
+since_time 和 until_time 参数（整数时间戳），不要使用日期字符串。
+参考时间范围：北京时间 {date_yesterday} → {date_today}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 【最优策略：3层分级扫描】
@@ -202,8 +202,7 @@ Tier3（泛列）：只抓赞≥100或大事件。
 1. 立即执行工具调用，对重点推文调用 x_thread_fetch 拉取完整线程、互动和吵架记录。
 2. 深度分析：新观点、是否吵架、市场反馈强度。
 3. 🚨 Fallback 强制规则：若带 since_time/until_time 的搜索返回 0 条结果，必须立即去掉时间参数重试同一批次，使用最近可用的帖文，绝对不可以停止或报错。
-4. ⚠️ 极其重要：搜索完成后，请只输出一段 200 字以内的内部情报摘要进行数据缓存，绝对不要输出最终的日报！请告诉我："第一轮扫描完毕，等待第二轮输入。\""""
-
+4. ⚠️ 极其重要：搜索完成后，请只输出一段 200 字以内的内部情报摘要进行数据缓存，绝对不要输出最终的日报！请告诉我："第一轮扫描完毕，等待第二轮输入。""""
 
 # ════════════════════════════════════════════════════════════════
 # 阶段 B 提示词
@@ -265,7 +264,6 @@ def build_prompt_b() -> str:
 ...以此类推，覆盖 硬件/空间计算、一级市场风向 等维度，共 10 个话题...
 @@@END@@@"""
 
-
 # ════════════════════════════════════════════════════════════════
 # 阶段 C 提示词
 # ════════════════════════════════════════════════════════════════
@@ -298,7 +296,6 @@ PROMPT: <英文提示词>
 
 ⚠️ 只输出纯文字，不要生成图片，不要调用任何工具，直接返回文本即可。"""
 
-
 # ════════════════════════════════════════════════════════════════
 # 调用硅基流动 SiliconFlow API 生图
 # ════════════════════════════════════════════════════════════════
@@ -320,9 +317,9 @@ def generate_cover_image(prompt: str) -> str:
                 "Content-Type": "application/json"
             },
             json={
-                "model":      "black-forest-labs/FLUX.1-schnell",
-                "prompt":     prompt,
-                "n":          1,
+                "model": "black-forest-labs/FLUX.1-schnell",
+                "prompt": prompt,
+                "n": 1,
                 "image_size": "1280x720"
             },
             timeout=120
@@ -334,7 +331,6 @@ def generate_cover_image(prompt: str) -> str:
     except Exception as e:
         print(f"[生图] ❌ 生图失败：{e}", flush=True)
         return ""
-
 
 # ════════════════════════════════════════════════════════════════
 # 下载图片到本地
@@ -353,7 +349,6 @@ def download_image(url: str, save_path: str = "cover.png") -> bool:
     except Exception as e:
         print(f"[下载] ❌ 下载失败：{e}", flush=True)
         return False
-
 
 # ════════════════════════════════════════════════════════════════
 # 上传图片到路过图床（国内永久 URL）
@@ -379,7 +374,6 @@ def upload_to_imgse(image_path: str) -> str:
         print(f"[图床] ❌ 路过图床上传失败：{e}", flush=True)
         return ""
 
-
 # ════════════════════════════════════════════════════════════════
 # 推送飞书
 # ════════════════════════════════════════════════════════════════
@@ -394,7 +388,6 @@ def push_to_feishu(text: str, cover_url: str = ""):
     resp = requests.post(FEISHU_WEBHOOK_URL, json=payload, timeout=30)
     print(f"飞书推送：{resp.status_code} | {resp.text[:80]}", flush=True)
 
-
 # ════════════════════════════════════════════════════════════════
 # 推送极简云（微信公众号）
 # ════════════════════════════════════════════════════════════════
@@ -407,11 +400,10 @@ def push_to_jijyun(text: str, title: str, cover_url: str = ""):
         "title":        title,
         "author":       "大尉Prinski",
         "html_content": html,
-        "cover_jpg":    cover_url       # 路过图床永久 URL，微信可直接抓取
+        "cover_jpg":    cover_url  # 路过图床永久 URL，微信可直接抓取
     }
     resp = requests.post(JIJYUN_WEBHOOK_URL, json=payload, timeout=30)
     print(f"极简云推送：{resp.status_code} | {resp.text[:120]}", flush=True)
-
 
 # ════════════════════════════════════════════════════════════════
 # 提取 @@@START@@@ ... @@@END@@@ 之间的正文
@@ -423,7 +415,6 @@ def extract_markdown_block(text: str) -> str:
         return text[start + len("@@@START@@@"):end].strip()
     return ""
 
-
 # ════════════════════════════════════════════════════════════════
 # 内容质量检查
 # ════════════════════════════════════════════════════════════════
@@ -434,20 +425,20 @@ def is_valid_content(text: str) -> bool:
     required = ["@@@START@@@", "@@@END@@@", "🍉"]
     return all(kw in text for kw in required)
 
-
 # ════════════════════════════════════════════════════════════════
 # 主流程
 # ════════════════════════════════════════════════════════════════
 def main():
     print("=" * 60, flush=True)
-    print(f"🚀 AI吃瓜日报自动化任务启动", flush=True)
+    print("🚀 AI吃瓜日报自动化任务启动", flush=True)
     print("=" * 60, flush=True)
 
     bb = Browserbase(api_key=BROWSERBASE_API_KEY)
 
-    session_opts = {"projectId": BROWSERBASE_PROJECT_ID}
+    # ✅ 修复：使用 Python SDK 的 snake_case 参数名
+    session_opts = {"project_id": BROWSERBASE_PROJECT_ID}
     if BROWSERBASE_CONTEXT_ID:
-        session_opts["browserSettings"] = {
+        session_opts["browser_settings"] = {
             "context": {"id": BROWSERBASE_CONTEXT_ID, "persist": True}
         }
 
@@ -455,8 +446,8 @@ def main():
     session_id = session.id
     print(f"Session ID: {session_id}", flush=True)
 
-    raw_b_text   = ""
-    cover_prompt = ""
+    raw_b_text    = ""
+    cover_prompt  = ""
     cover_title_c = ""
 
     with sync_playwright() as pw:
@@ -496,9 +487,9 @@ def main():
                                      extend_if_growing=False)
 
         # 解析 TITLE / PROMPT
-        title_match  = re.search(r"TITLE[:：]\s*(.+)", cover_raw)
-        prompt_match = re.search(r"PROMPT[:：]\s*([\s\S]+)", cover_raw)
-        cover_title_c = title_match.group(1).strip()  if title_match  else ""
+        title_match   = re.search(r"TITLE[:：]\s*(.+)", cover_raw)
+        prompt_match  = re.search(r"PROMPT[:：]\s*([\s\S]+)", cover_raw)
+        cover_title_c = title_match.group(1).strip() if title_match else ""
         cover_prompt  = prompt_match.group(1).strip() if prompt_match else cover_raw.split("\n")[-1].strip()
         print(f"\n[阶段C] 动态标题：{cover_title_c}", flush=True)
         print(f"[阶段C] 封面图提示词：{cover_prompt[:100]}...", flush=True)
@@ -514,7 +505,7 @@ def main():
         raise SystemExit(1)
 
     if not final_markdown:
-        final_markdown = raw_b_text   # 没有定界符时用全文兜底
+        final_markdown = raw_b_text  # 没有定界符时用全文兜底
 
     # ── Step 6：硅基流动生图 ────────────────────────────────────
     cover_url = generate_cover_image(cover_prompt)
@@ -543,7 +534,6 @@ def main():
     push_to_jijyun(final_markdown, title, final_cover_url)
 
     print("\n🎉 全部完成！", flush=True)
-
 
 if __name__ == "__main__":
     main()
