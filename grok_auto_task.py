@@ -10,7 +10,7 @@ BROWSERBASE_PROJECT_ID = os.getenv("BROWSERBASE_PROJECT_ID", "")
 BROWSERBASE_CONTEXT_ID = os.getenv("BROWSERBASE_CONTEXT_ID", "")
 JIJYUN_WEBHOOK_URL     = os.getenv("JIJYUN_WEBHOOK_URL", "")
 FEISHU_WEBHOOK_URL     = os.getenv("FEISHU_WEBHOOK_URL", "")
-XAI_API_KEY            = os.getenv("XAI_API_KEY", "")
+SF_API_KEY             = os.getenv("SF_API_KEY", "")   # 硅基流动
 
 def get_beijing_date_cn() -> str:
     from datetime import datetime, timezone, timedelta
@@ -451,7 +451,7 @@ def main():
 
         browser.close()
 
-    # Step 6：调用 xAI Aurora 生图（Browserbase Session 已关闭，节省时间）
+    # Step 6：调用硅基流动 FLUX 生图（Browserbase Session 已关闭，节省时间）
     cover_url = generate_cover_image(cover_prompt)
     download_image(cover_url, "cover.png")
 
