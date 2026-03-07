@@ -617,7 +617,7 @@ def main():
         print("[阶段B] ⏳ 强制等待 60s，等待工具调用启动...", flush=True)
         time.sleep(60)
         raw_b_text = wait_and_extract(page, "阶段B", "04_stage_b",
-                                      interval=5, stable_rounds=3, max_wait=200,
+                                      interval=5, stable_rounds=3, max_wait=160,
                                       extend_if_growing=True, min_len=1000)
         print(f"\n阶段B 内容长度：{len(raw_b_text)} 字符", flush=True)
 
