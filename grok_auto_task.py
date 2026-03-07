@@ -6,12 +6,69 @@ from browserbase import Browserbase
 from playwright.sync_api import sync_playwright
 
 # ── 环境变量 ─────────────────────────────────────────────────────
-BROWSERBASE_API_KEY    = os.getenv("BROWSERBASE_API_KEY", "")
-BROWSERBASE_PROJECT_ID = os.getenv("BROWSERBASE_PROJECT_ID", "")
-BROWSERBASE_CONTEXT_ID = os.getenv("BROWSERBASE_CONTEXT_ID", "")
-JIJYUN_WEBHOOK_URL     = os.getenv("JIJYUN_WEBHOOK_URL", "")
-FEISHU_WEBHOOK_URL     = os.getenv("FEISHU_WEBHOOK_URL", "")
-SF_API_KEY             = os.getenv("SF_API_KEY", "")          # 硅基流动生图
+JIJYUN_WEBHOOK_URL = os.getenv("JIJYUN_WEBHOOK_URL", "")
+FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")
+SF_API_KEY         = os.getenv("SF_API_KEY", "")              # 硅基流动生图
+
+# 多账号池：依次尝试 _1 / _2 / _3 / 无后缀
+# GitHub Secrets 里加 BROWSERBASE_API_KEY_2 / BROWSERBASE_PROJECT_ID_2 等即可
+def _load_bb_accounts() -> list:
+    accounts = []
+    for suffix in ["", "_2", "_3", "_4"]:
+        key = os.getenv(f"BROWSERBASE_API_KEY{suffix}", "")
+        pid = os.getenv(f"BROWSERBASE_PROJECT_ID{suffix}", "")
+        ctx = os.getenv(f"BROWSERBASE_CONTEXT_ID{suffix}", "")
+        if key and pid:
+            accounts.append({"api_key": key, "project_id": pid, "context_id": ctx})
+    return accounts
+
+BB_ACCOUNTS  = _load_bb_accounts()
+STATE_FILE   = "bb_state.json"
+COOLDOWN_DAYS = 30
+MAX_CONSEC   = 3       # 连续失败几次触发冷却
+
+def load_bb_state() -> dict:
+    """读取账号状态文件（连续失败次数 + 冷却截止时间）"""
+    if os.path.exists(STATE_FILE):
+        try:
+            import json
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_bb_state(state: dict):
+    """将账号状态写回文件"""
+    import json
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+    print(f"[状态] 已保存 {STATE_FILE}", flush=True)
+
+def is_in_cooldown(state: dict, key: str) -> bool:
+    """判断某账号是否还在冷却期"""
+    from datetime import datetime
+    info = state.get(key, {})
+    until = info.get("cooldown_until")
+    if not until:
+        return False
+    return datetime.utcnow().isoformat() < until
+
+def mark_failure(state: dict, key: str) -> bool:
+    """记录一次 402 失败，返回 True 表示已触发冷却"""
+    from datetime import datetime, timedelta
+    info = state.setdefault(key, {"consecutive_failures": 0, "cooldown_until": None})
+    info["consecutive_failures"] = info.get("consecutive_failures", 0) + 1
+    if info["consecutive_failures"] >= MAX_CONSEC:
+        until = (datetime.utcnow() + timedelta(days=COOLDOWN_DAYS)).isoformat()
+        info["cooldown_until"] = until
+        print(f"[状态] 账号 ...{key} 连续失败 {MAX_CONSEC} 次，冷却至 {until[:10]}", flush=True)
+        return True
+    return False
+
+def mark_success(state: dict, key: str):
+    """成功后清零连续失败计数"""
+    state[key] = {"consecutive_failures": 0, "cooldown_until": None}
 
 # ── 日期工具 ─────────────────────────────────────────────────────
 def get_beijing_date_cn() -> str:
@@ -488,17 +545,60 @@ def main():
     print(f"🚀 AI吃瓜日报自动化任务启动", flush=True)
     print("=" * 60, flush=True)
 
-    bb = Browserbase(api_key=BROWSERBASE_API_KEY)
+    if not BB_ACCOUNTS:
+        raise RuntimeError("❌ 未配置任何 Browserbase 账号，请检查 Secrets")
 
-    session_opts = {"project_id": BROWSERBASE_PROJECT_ID}
-    if BROWSERBASE_CONTEXT_ID:
-        session_opts["browser_settings"] = {
-            "context": {"id": BROWSERBASE_CONTEXT_ID, "persist": True}
-        }
+    bb_state   = load_bb_state()
+    session    = None
+    session_id = None
+    used_acct  = None
+    used_key   = None
 
-    session    = bb.sessions.create(**session_opts)
-    session_id = session.id
-    print(f"Session ID: {session_id}", flush=True)
+    for i, acct in enumerate(BB_ACCOUNTS):
+        key = acct["api_key"][-8:]   # 用末8位作为状态字典的 key
+        print(f"\n[Browserbase] 尝试账号 #{i+1}（...{key}）", flush=True)
+
+        # 检查冷却期
+        if is_in_cooldown(bb_state, key):
+            info  = bb_state.get(key, {})
+            until = info.get("cooldown_until", "")[:10]
+            print(f"[Browserbase] ⏸️  账号 #{i+1} 冷却中（至 {until}），跳过", flush=True)
+            continue
+
+        try:
+            bb_obj       = Browserbase(api_key=acct["api_key"])
+            session_opts = {"project_id": acct["project_id"]}
+            if acct["context_id"]:
+                session_opts["browser_settings"] = {
+                    "context": {"id": acct["context_id"], "persist": True}
+                }
+            session    = bb_obj.sessions.create(**session_opts)
+            session_id = session.id
+            used_acct  = acct
+            used_key   = key
+            mark_success(bb_state, key)
+            save_bb_state(bb_state)
+            print(f"[Browserbase] ✅ 账号 #{i+1} 可用，Session ID: {session_id}", flush=True)
+            break
+
+        except Exception as e:
+            err_str = str(e)
+            if "402" in err_str or "Payment Required" in err_str or "minutes limit" in err_str:
+                triggered = mark_failure(bb_state, key)
+                save_bb_state(bb_state)
+                if triggered:
+                    print(f"[Browserbase] 🔴 账号 #{i+1} 已触发 {COOLDOWN_DAYS} 天冷却，切换下一个...", flush=True)
+                else:
+                    info = bb_state.get(key, {})
+                    cnt  = info.get("consecutive_failures", 0)
+                    print(f"[Browserbase] ⚠️  账号 #{i+1} 额度用完（第 {cnt}/{MAX_CONSEC} 次），切换下一个...", flush=True)
+                continue
+            else:
+                save_bb_state(bb_state)
+                raise
+
+    if not session_id:
+        raise RuntimeError("❌ 所有 Browserbase 账号均不可用（额度耗尽或冷却中），请充值或新增账号")
 
     raw_b_text   = ""
     cover_prompt = ""
@@ -506,7 +606,7 @@ def main():
 
     with sync_playwright() as pw:
         browser = pw.chromium.connect_over_cdp(
-            f"wss://connect.browserbase.com?apiKey={BROWSERBASE_API_KEY}"
+            f"wss://connect.browserbase.com?apiKey={used_acct['api_key']}"
             f"&sessionId={session_id}"
         )
         context = browser.contexts[0]
