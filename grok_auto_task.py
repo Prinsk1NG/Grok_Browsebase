@@ -297,7 +297,7 @@ Tier3（泛列）：仅保留赞≥100或大事件帖。
 # ════════════════════════════════════════════════════════════════
 def build_prompt_b() -> str:
     date_today, date_yesterday = get_dates()
-    return f"""执行Tiered Scan模式：这是第二轮搜索，整个任务不得超过 90 秒，超时必须立即输出结果。
+    return f"""执行Tiered Scan模式：这是第二轮搜索，整个任务不得超过 130 秒，超时必须立即输出结果。
 
 【时间戳复用（必须第一步确认）】
 直接复用第一轮Step 0输出的 since_time 和 until_time 整数时间戳。
