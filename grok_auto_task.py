@@ -262,42 +262,34 @@ def build_prompt_a() -> str:
     date_today, date_yesterday = get_dates()
     return f"""执行Tiered Scan模式：你现在是X商业情报深度分析师。
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【Step 0：获取精确时间戳（必须首先执行！）】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-请立即用 code_execution 运行以下代码，获得 Unix 时间戳：
+【Step 0：时间戳（必须第一步执行）】
+立即调用 code_execution 执行以下代码：
 import time
 now = int(time.time())
 since_ts = now - 86400
-print(f"since_time:{{since_ts}}  until_time:{{now}}")
+print(f"since_time:{since_ts} until_time:{now}")
+后续所有 x_keyword_search 必须复用这两个整数时间戳（since_time/until_time）。
 
-👉 在后续所有 x_keyword_search 调用中，必须使用上面输出的
-   since_time 和 until_time 参数（整数时间戳），不要使用日期字符串。
-   参考时间范围：北京时间 {date_yesterday} → {date_today}
+【核心策略】
+Tier1（全量）：搜索所有推文 + 重点帖调用 x_thread_fetch 拉完整线程。
+Tier2（活跃）：仅保留赞≥30的帖做互动分析。
+Tier3（泛列）：仅保留赞≥100或大事件帖。
+使用 parallel 调用（一次最多同时发3个工具请求）。
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【最优策略：3层分级扫描】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Tier1（核心）：全量搜索+拉所有回复线程。
-Tier2（活跃）：只看赞≥30的帖+互动分析。
-Tier3（泛列）：只抓赞≥100或大事件。
+【第一轮搜索：3批并行】
+批次1 (Tier1 巨头18人)：@elonmusk @sama @karpathy @demishassabis @darioamodei @OpenAI @AnthropicAI @GoogleDeepMind @GaryMarcus @xAI @AIatMeta @GoogleAI @MSFTResearch @IlyaSutskever @gregbrockman @rowancheung @clmcleod @bindureddy
+批次2 (Tier2 中文KOL16人)：@dotey @oran_ge @vista8 @imxiaohu @Sxsyer @K_O_D_A_D_A @tualatrix @linyunqiu @garywong @web3buidl @AI_Era @AIGC_News @jiangjiang @hw_star @mranti @nishuang
+批次3 (Tier3 VC媒体16人)：@a16z @ycombinator @lightspeedvp @sequoia @foundersfund @eladgil @pmarca @bchesky @chamath @paulg @TheInformation @TechCrunch @verge @WIRED @Scobleizer @bentossell
 
-【第一轮搜索：请分为3批并行调用 x_keyword_search】
+【强制规则】
+1. 所有搜索优先带 since_time/until_time；若返回0条，立即去掉时间参数重试同一批次（必须成功）。
+2. 重点推文（赞>100或含争论）立即调用 x_thread_fetch 拉完整互动。
+3. 分析只关注：新观点、吵架记录、市场反馈强度。
 
-批次1 (18人 - Tier 1 巨头与领袖)：
-@elonmusk @sama @karpathy @demishassabis @darioamodei @OpenAI @AnthropicAI @GoogleDeepMind @GaryMarcus @xAI @AIatMeta @GoogleAI @MSFTResearch @IlyaSutskever @gregbrockman @rowancheung @clmcleod @bindureddy
-
-批次2 (16人 - Tier 2 中文KOL与极客)：
-@dotey @oran_ge @vista8 @imxiaohu @Sxsyer @K_O_D_A_D_A @tualatrix @linyunqiu @garywong @web3buidl @AI_Era @AIGC_News @jiangjiang @hw_star @mranti @nishuang
-
-批次3 (16人 - Tier 3 顶级VC与科技媒体)：
-@a16z @ycombinator @lightspeedvp @sequoia @foundersfund @eladgil @pmarca @bchesky @chamath @paulg @TheInformation @TechCrunch @verge @WIRED @Scobleizer @bentossell
-
-【操作要求】：
-1. 立即执行工具调用，对重点推文调用 x_thread_fetch 拉取完整线程、互动和吵架记录。
-2. 深度分析：新观点、是否吵架、市场反馈强度。
-3. 🚨 Fallback 强制规则：若带 since_time/until_time 的搜索返回 0 条结果，必须立即去掉时间参数重试同一批次，使用最近可用的帖文，绝对不可以停止或报错。
-4. ⚠️ 极其重要：搜索完成后，请只输出一段 200 字以内的内部情报摘要进行数据缓存，绝对不要输出最终的日报！请告诉我："第一轮扫描完毕，等待第二轮输入。\""""
+【输出限制（严格遵守）】
+搜索完成后，只输出一段≤200字的“内部情报摘要”（含核心洞察+数据缓存），最后一行必须是：
+第一轮扫描完毕，等待第二轮输入。
+禁止任何其他文字、解释、日报、代码块。\""""
 
 
 # ════════════════════════════════════════════════════════════════
@@ -307,58 +299,49 @@ def build_prompt_b() -> str:
     date_today, date_yesterday = get_dates()
     return f"""执行Tiered Scan模式：这是第二轮搜索（覆盖后50个核心账号）。
 
-⚠️ 时间范围：请复用第一轮 Step0 已计算好的 since_time / until_time 时间戳，
-不要重新计算，不要使用日期字符串。参考范围：{date_yesterday} → {date_today}。
+【时间戳复用（必须第一步确认）】
+直接复用第一轮Step 0输出的 since_time 和 until_time 整数时间戳。
+所有 x_keyword_search 必须优先带这两个参数；若返回0条，立即去掉时间参数重试同一批次（必须成功）。
 
-🚨 Fallback 强制规则：若带时间戳搜索返回 0 条结果，立即去掉 since_time/until_time 参数重试，
-使用最近可用帖文。严禁以"无法获取时间范围数据"为由停止输出——必须用现有数据完成日报。
+【核心策略（复用第一轮）】
+Tier1：全量搜索 + 重点帖立即调用 x_thread_fetch 拉完整线程和互动。
+Tier2：仅保留赞≥30的帖做深度分析。
+Tier3：仅保留赞≥100或重大事件。
+优先并行调用工具（一次最多同时发3个请求）。
 
-【第二轮搜索：请分为以下3批调用 x_keyword_search】
-
-批次4 (18人 - Tier 1 开源新星与基础设施)：
+【第二轮搜索：3批并行】
+批次4 (Tier1 开源与基础设施 18人)：
 @HuggingFace @MistralAI @Perplexity_AI @GroqInc @Cohere @TogetherCompute @runwayml @Midjourney @StabilityAI @Scale_AI @CerebrasSystems @tenstorrent @weights_biases @langchainai @llama_index @supabase @vllm_project @huggingface_hub
 
-批次5 (16人 - Tier 2 硬件与空间计算生态)：
+批次5 (Tier2 硬件与空间计算 16人)：
 @nvidia @AMD @Intel @SKhynix @tsmc @magicleap @NathieVR @PalmerLuckey @ID_AA_Carmack @boz @rabovitz @htcvive @XREAL_Global @RayBan @MetaQuestVR @PatrickMoorhead
 
-批次6 (16人 - Tier 3 顶级研究员与硬核圈子)：
+批次6 (Tier3 研究员与硬核圈 16人)：
 @jeffdean @chrmanning @hardmaru @goodfellow_ian @feifeili @_akhaliq @promptengineer @AI_News_Tech @siliconvalley @aithread @aibreakdown @aiexplained @aipubcast @lexfridman @hubermanlab @swyx
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【🚨 最终成稿指令（严格执行）】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-完成这50人的检索后，请综合你在【第一轮】和【第二轮】收集到的所有高价值情报，挑选出最震撼的 10 个话题。
-⛔ 无论工具是否有时间限制，都必须输出完整日报。"无法获取数据"不是停止的理由——用你能搜到的最新帖文完成输出。
+【最终成稿指令（严格执行）】
+完成检索后，综合第一轮+第二轮所有高价值情报，挑选最震撼的10个话题（不必强行凑够 10 个，如果没有足够多高价值话题，可以空缺不输出任何内容）严格按以下格式输出日报：
 
-1. 强制标识：开头必须且只能是 @@@START@@@，结尾必须且只能是 @@@END@@@。绝对禁止将定界符放在草稿中。
-2. @@@END@@@ 必须是你输出的最后一行，单独成行，其后不得有任何文字、空格或说明。
-3. 彻底禁用代码块：定界符内部，严禁使用三个反引号包裹任何内容。
+输出必须以 @@@START@@@ 开头，以 @@@END@@@ 单独成行结束，其后不得有任何其他内容。
+禁止代码块、额外文字、思考过程。
 
-请严格按以下模板输出定稿：
-
+严格模板：
 @@@START@@@
-📡 AI圈极客吃瓜日报 | {date_today}
+📡 AI圈极客吃瓜日报 | 2026-03-07
 
 **🏰 【巨头宫斗】**
 
-**🍉 1. 填入真实话题标题**
+**🍉 1. 话题标题**
 **🗣️ 极客原声态：**
-@原推账号 | 真实姓名 (❤️赞/💬评)
-> "填入中文译文，绝对不要包含任何URL链接"
+@账号 | 姓名 | 身份
+> "中文翻译内容"(❤️赞/💬评)
 **📝 捕手解码：**
-• 📌 增量事实：填入对该事件的客观事实补充
-• 🧠 隐性博弈：填入巨头或行业之间的暗战剖析
-• 🎯 资本风向标：填入对投资或商业趋势的研判
+• 📌 增量事实：...
+• 🧠 隐性博弈：...
+• 🎯 资本风向标：...
 
-**🍉 2. 填入下一个话题标题**
-...格式同上...
+（按此格式完成剩余话题，合理分配【巨头宫斗】【中文圈大瓜】【硬件与空间计算】【一级市场与研究员圈】等维度）
 
----
-
-**🇨🇳 【中文圈大瓜】**
-
-**🍉 3. 填入话题标题**
-...以此类推，覆盖 硬件/空间计算、一级市场风向 等维度，共 10 个话题...
 @@@END@@@"""
 
 
@@ -366,33 +349,33 @@ def build_prompt_b() -> str:
 # 阶段 C 提示词
 # ════════════════════════════════════════════════════════════════
 def build_prompt_c() -> str:
-    return """【阶段 C：标题 + 封面图提示词生成】
+    return """执行阶段C：标题 + 封面图提示词生成（从当前10条新闻中提炼）。
 
-任务：从以上 10 条新闻中，找出最具冲突感、炸裂感或吃瓜属性的核心事件，完成以下两项输出：
+【核心任务（一步完成）】
+从以上10条新闻中，挑选最具冲突感、炸裂感或吃瓜属性的1～2个核心事件，生成以下两项输出：
 
 ━━━ 输出一：微信公众号文章标题 ━━━
-从 10 条新闻中挑选 1～2 个最有冲击力的事件，写一个中文标题，要求：
-- 极度抓眼球，制造好奇心或情绪冲击
-- 风格参考：「XXX 公开撕 XXX：这场战争刚刚开始」「AI 圈最大瓜：XXX 当众打脸 XXX」
-- 可用数字、破折号、感叹号增强张力
-- 长度：15～30 个汉字
-- 禁止：平淡陈述句、学术腔
+要求：
+- 极度抓眼球，制造强烈好奇心或情绪冲击
+- 风格参考：「XXX公开撕XXX：这场战争刚刚开始」「AI圈最大瓜：XXX当众打脸XXX」
+- 允许用数字、破折号、感叹号增强张力
+- 长度严格15～30个汉字
+- 禁止平淡陈述、学术腔
 
 ━━━ 输出二：封面图英文提示词 ━━━
 针对同一核心事件，生成文生图提示词，严格遵守：
-- 风格：American comic book style，漫威/DC 面板感，bold black ink outlines，flat vibrant colors，halftone dot shading
-- 构图：两股势力或角色正面对抗，表情极度夸张，动作感强烈
-- 象征物：用抽象化符号代表事件主角（芯片/机器人/火箭/巨型拳头/美元等），禁止真实人脸和公司 Logo 原图
-- 对话气泡：包含一句 ≤10 个英文单词的台词，点出冲突核心
-- 画幅：横版 16:9，适合作为公众号封面
-- 禁止：中文文字、水印、写实摄影感
-- 长度：英文提示词 ≤ 150 词
+- 风格：American comic book style，Marvel/DC panel感，bold black ink outlines，flat vibrant colors，halftone dot shading
+- 构图：两股势力正面对抗，表情极度夸张，动作感强烈
+- 象征物：用抽象符号（芯片/机器人/火箭/巨型拳头/美元等）代表主角，禁止真实人脸和公司Logo
+- 对话气泡：一句≤10个英文单词的台词，点出冲突核心
+- 画幅：横版16:9，适合公众号封面
+- 长度：英文提示词≤150词
+- 禁止：中文文字、水印、写实感
 
-━━━ 严格按以下格式输出，不要多余解释 ━━━
+【输出铁闸（必须严格遵守）】
+只输出以下两行，禁止任何解释、思考、额外文字：
 TITLE: <中文标题>
-PROMPT: <英文提示词>
-
-⚠️ 只输出纯文字，不要生成图片，不要调用任何工具，直接返回文本即可。"""
+PROMPT: <英文提示词>"""
 
 
 # ════════════════════════════════════════════════════════════════
