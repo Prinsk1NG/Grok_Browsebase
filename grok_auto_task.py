@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import json
 import requests
 from browserbase import Browserbase
 from playwright.sync_api import sync_playwright
@@ -8,10 +9,8 @@ from playwright.sync_api import sync_playwright
 # ── 环境变量 ─────────────────────────────────────────────────────
 JIJYUN_WEBHOOK_URL = os.getenv("JIJYUN_WEBHOOK_URL", "")
 FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")
-SF_API_KEY         = os.getenv("SF_API_KEY", "")              # 硅基流动生图
+SF_API_KEY         = os.getenv("SF_API_KEY", "")
 
-# 多账号池：依次尝试 _1 / _2 / _3 / 无后缀
-# GitHub Secrets 里加 BROWSERBASE_API_KEY_2 / BROWSERBASE_PROJECT_ID_2 等即可
 def _load_bb_accounts() -> list:
     accounts = []
     for suffix in ["", "_2", "_3", "_4"]:
@@ -22,16 +21,14 @@ def _load_bb_accounts() -> list:
             accounts.append({"api_key": key, "project_id": pid, "context_id": ctx})
     return accounts
 
-BB_ACCOUNTS  = _load_bb_accounts()
-STATE_FILE   = "bb_state.json"
+BB_ACCOUNTS   = _load_bb_accounts()
+STATE_FILE    = "bb_state.json"
 COOLDOWN_DAYS = 30
-MAX_CONSEC   = 3       # 连续失败几次触发冷却
+MAX_CONSEC    = 3
 
 def load_bb_state() -> dict:
-    """读取账号状态文件（连续失败次数 + 冷却截止时间）"""
     if os.path.exists(STATE_FILE):
         try:
-            import json
             with open(STATE_FILE, "r") as f:
                 return json.load(f)
         except Exception:
@@ -39,23 +36,19 @@ def load_bb_state() -> dict:
     return {}
 
 def save_bb_state(state: dict):
-    """将账号状态写回文件"""
-    import json
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
     print(f"[状态] 已保存 {STATE_FILE}", flush=True)
 
 def is_in_cooldown(state: dict, key: str) -> bool:
-    """判断某账号是否还在冷却期"""
     from datetime import datetime
-    info = state.get(key, {})
+    info  = state.get(key, {})
     until = info.get("cooldown_until")
     if not until:
         return False
     return datetime.utcnow().isoformat() < until
 
 def mark_failure(state: dict, key: str) -> bool:
-    """记录一次 402 失败，返回 True 表示已触发冷却"""
     from datetime import datetime, timedelta
     info = state.setdefault(key, {"consecutive_failures": 0, "cooldown_until": None})
     info["consecutive_failures"] = info.get("consecutive_failures", 0) + 1
@@ -67,7 +60,6 @@ def mark_failure(state: dict, key: str) -> bool:
     return False
 
 def mark_success(state: dict, key: str):
-    """成功后清零连续失败计数"""
     state[key] = {"consecutive_failures": 0, "cooldown_until": None}
 
 # ── 日期工具 ─────────────────────────────────────────────────────
@@ -150,7 +142,6 @@ def send_prompt(page, prompt_text: str, label: str, screenshot_prefix: str):
     time.sleep(1.5)
     page.screenshot(path=f"{screenshot_prefix}_before.png")
 
-    # 先点一下输入框激活，确保按钮变为可见状态
     try:
         inp = page.query_selector("div[contenteditable='true'], textarea")
         if inp:
@@ -159,7 +150,6 @@ def send_prompt(page, prompt_text: str, label: str, screenshot_prefix: str):
     except Exception:
         pass
 
-    # 尝试正常点击发送按钮（timeout 延长到 30s）
     clicked = False
     try:
         send_btn = page.wait_for_selector(
@@ -174,7 +164,6 @@ def send_prompt(page, prompt_text: str, label: str, screenshot_prefix: str):
     except Exception as e:
         print(f"[{label}] ⚠️ 常规点击失败（{e}），尝试 JS 点击...", flush=True)
 
-    # JS 兜底：直接强制点击提交按钮
     if not clicked:
         result = page.evaluate("""() => {
             const btn = document.querySelector("button[type='submit']")
@@ -206,9 +195,6 @@ def wait_and_extract(page, label: str, screenshot_prefix: str,
                      interval: int = 3, stable_rounds: int = 4,
                      max_wait: int = 120, extend_if_growing: bool = False,
                      min_len: int = 80) -> str:
-    """
-    min_len: 内容至少达到此长度才允许触发"稳定"判定，防止 Grok 初始短文本被误判为完成。
-    """
     print(f"[{label}] 等待回复（最长 {max_wait}s，最小有效长度 {min_len}）...", flush=True)
     last_len = -1
     stable   = 0
@@ -235,7 +221,7 @@ def wait_and_extract(page, label: str, screenshot_prefix: str,
         print(f"[{label}] ⏳ 到达 {max_wait}s，仍在生成，每 5s 延长（最多 300s）...", flush=True)
         prev_len  = last_len
         ext_count = 0
-        max_ext   = 60   # 60 × 5s = 300s 上限，防止无限等待
+        max_ext   = 60
         while ext_count < max_ext:
             time.sleep(5)
             text    = _get_last_msg(page)
@@ -259,7 +245,6 @@ def wait_and_extract(page, label: str, screenshot_prefix: str,
 # 阶段 A 提示词
 # ════════════════════════════════════════════════════════════════
 def build_prompt_a() -> str:
-    # date_today/date_yesterday 备用，当前模板未显式使用
     return """执行Tiered Scan模式：你现在是X商业情报深度分析师。
 
 【Step 0：时间戳（必须第一步执行）】
@@ -292,12 +277,11 @@ Tier3（泛列）：仅保留赞≥100或大事件帖。
 第一轮扫描完毕，等待第二轮输入。
 禁止任何其他文字、解释、日报、代码块。"""
 
-
 # ════════════════════════════════════════════════════════════════
 # 阶段 B 提示词
 # ════════════════════════════════════════════════════════════════
 def build_prompt_b() -> str:
-    date_today, _ = get_dates()   # 用于在模板里注入当天日期
+    date_today, _ = get_dates()
     return f"""执行Tiered Scan模式：这是第二轮搜索（覆盖后50个核心账号），整个任务不得超过 130 秒，超时必须立即输出当前结果。
 
 【时间戳复用（必须第一步确认）】
@@ -326,7 +310,7 @@ Tier3：仅保留赞≥100或重大事件。
 输出必须以 @@@START@@@ 开头，以 @@@END@@@ 单独成行结束，其后不得有任何其他内容。
 禁止代码块、额外文字、思考过程。
 
-严格模板：
+严格模板（注意：@账号行与引用行之间禁止空行）：
 @@@START@@@
 📡 昨夜，X上硅谷AI圈都在聊啥 | {date_today}
 
@@ -344,7 +328,6 @@ Tier3：仅保留赞≥100或重大事件。
 （按此格式完成剩余话题，合理分配 巨头宫斗 中文圈 硬件与空间计算 投资人 等维度，也可按抓取内容总结各种热点维度）
 @@@END@@@"""
 
-
 # ════════════════════════════════════════════════════════════════
 # 阶段 C 提示词
 # ════════════════════════════════════════════════════════════════
@@ -352,7 +335,7 @@ def build_prompt_c() -> str:
     return """执行阶段C：标题 + 封面图提示词生成（从当前10条新闻中提炼）。
 
 【核心任务（一步完成）】
-从以上10条新闻中，挑选最具冲突感、炸裂感或吃瓜属性的1～2个核心事件，生成以下两项输出：
+从以上10条新闻中，挑选最具冲突感、炸裂感或吃瓜属性的1～2个核心事件，生成以下三项输出：
 
 ━━━ 输出一：微信公众号文章标题 ━━━
 要求：
@@ -374,13 +357,13 @@ def build_prompt_c() -> str:
 
 ━━━ 输出三：深度解读 ━━━
 针对输出一中选定的核心事件，写一段深度解读，严格遵守：
-- 字数：100～200字以内
+- 字数：150～200字以内
 - 重点分析对以下三类群体的影响：
   (a) 🇨🇳 中国AI行业及从业人员
   (b) 💰 中国VC一级市场投资人
   (c) 👥 散户和普通用户
-- 语言风格是幽默风趣，每个维度1～2句话点明核心，如果该维度没啥影响，就不用强行分析
-- 整体为流畅段落，禁止列表、禁止标题。
+- 语言风格幽默风趣，每个维度1～2句话点明核心，如果该维度没啥影响就不必强行分析
+- 整体为流畅段落，禁止列表、禁止标题
 
 【输出铁闸（必须严格遵守）】
 只输出以下三行，禁止任何解释、思考、额外文字：
@@ -388,12 +371,10 @@ TITLE: <中文标题>
 PROMPT: <英文提示词>
 INSIGHT: <150～200字深度解读>"""
 
-
 # ════════════════════════════════════════════════════════════════
 # 调用硅基流动 SiliconFlow API 生图
 # ════════════════════════════════════════════════════════════════
 def generate_cover_image(prompt: str) -> str:
-    """调用硅基流动 FLUX.1-schnell 生成封面图，返回图片 URL。失败返回空字符串。"""
     if not SF_API_KEY:
         print("⚠️ SF_API_KEY 未配置，跳过生图", flush=True)
         return ""
@@ -425,7 +406,6 @@ def generate_cover_image(prompt: str) -> str:
         print(f"[生图] ❌ 生图失败：{e}", flush=True)
         return ""
 
-
 # ════════════════════════════════════════════════════════════════
 # 下载图片到本地
 # ════════════════════════════════════════════════════════════════
@@ -444,16 +424,10 @@ def download_image(url: str, save_path: str = "cover.png") -> bool:
         print(f"[下载] ❌ 下载失败：{e}", flush=True)
         return False
 
-
 # ════════════════════════════════════════════════════════════════
-# 上传图片到路过图床（国内永久 URL）
+# 上传图片到 ImgBB
 # ════════════════════════════════════════════════════════════════
 def upload_to_imgbb(image_path: str) -> str:
-    """上传本地图片到 ImgBB 图床，返回永久公开 URL。
-    需要在 GitHub Secrets 里配置 IMGBB_API_KEY
-    （去 https://api.imgbb.com 登录后一键生成，完全免费）。
-    失败返回空字符串。
-    """
     imgbb_key = os.getenv("IMGBB_API_KEY", "")
     if not imgbb_key:
         print("[图床] ⚠️ IMGBB_API_KEY 未配置，跳过图床上传", flush=True)
@@ -484,67 +458,141 @@ def upload_to_imgbb(image_path: str) -> str:
         print(f"[图床] ❌ ImgBB 上传异常：{e}", flush=True)
         return ""
 
+# ════════════════════════════════════════════════════════════════
+# 正文后处理：删除 @账号行 与引用行之间的空行
+# ════════════════════════════════════════════════════════════════
+def _remove_blank_before_quote(text: str) -> str:
+    """把 @xxx 行和下一行 > 引用之间的空行删掉"""
+    return re.sub(r'(@\S[^\n]*)\n\n(> )', r'\1\n\2', text)
 
 # ════════════════════════════════════════════════════════════════
-# 推送飞书
+# 飞书：构建 interactive 卡片 payload
 # ════════════════════════════════════════════════════════════════
-def push_to_feishu(text: str):
+def build_feishu_card(text: str, title: str,
+                      cover_url: str = "", insight: str = "") -> dict:
+    """
+    生成飞书 interactive 卡片：
+    - 蓝色 header 显示日报标题
+    - 深度解读置顶
+    - 正文按 🍉 话题拆分为独立 section，标题加粗
+    - 底部附封面图链接
+    """
+    text = _remove_blank_before_quote(text)
+    elements = []
+
+    # ── 深度解读 ──────────────────────────────────
+    if insight:
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**🔍 深度解读**\n{insight}"
+            }
+        })
+        elements.append({"tag": "hr"})
+
+    # ── 正文：按 🍉 话题拆分 ──────────────────────
+    # 先把整段文字按话题号切开，每条单独成一个 element
+    parts = re.split(r'(?=\*\*🍉)', text)
+    for part in parts:
+        if not part.strip():
+            continue
+        # Feishu lark_md 单个元素上限约 4000 字符，超出则截断
+        chunk = part[:3800]
+        elements.append({
+            "tag": "div",
+            "text": {"tag": "lark_md", "content": chunk}
+        })
+
+    # ── 封面图链接 ────────────────────────────────
+    if cover_url:
+        elements.append({"tag": "hr"})
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"🖼️ [点击查看封面图]({cover_url})"
+            }
+        })
+
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title":    {"tag": "plain_text", "content": f"📡 {title}"},
+                "template": "blue"
+            },
+            "elements": elements
+        }
+    }
+
+# ════════════════════════════════════════════════════════════════
+# 飞书推送
+# ════════════════════════════════════════════════════════════════
+def push_to_feishu(card_payload: dict):
     if not FEISHU_WEBHOOK_URL:
         print("⚠️ FEISHU_WEBHOOK_URL 未配置，跳过", flush=True)
         return
-    payload = {"msg_type": "text", "content": {"text": text}}
-    resp = requests.post(FEISHU_WEBHOOK_URL, json=payload, timeout=30)
+    resp = requests.post(FEISHU_WEBHOOK_URL, json=card_payload, timeout=30)
     print(f"飞书推送：{resp.status_code} | {resp.text[:80]}", flush=True)
 
-
 # ════════════════════════════════════════════════════════════════
-# 推送极简云（微信公众号）
+# 微信：构建完整 HTML 正文
 # ════════════════════════════════════════════════════════════════
 def _md_to_html(text: str) -> str:
-    """将 Markdown **bold** 转为 <strong>，换行转 <br>"""
-    text = re.sub(r'\*\*(.+?)\*\*', r'<strong></strong>', text, flags=re.DOTALL)
+    """Markdown **粗体** → <strong>，换行 → <br>"""
+    text = re.sub(r'\*\*([^*]+?)\*\*', r'<strong>\1</strong>', text)
     text = text.replace("\n", "<br>")
     return text
 
-def push_to_jijyun(text: str, title: str, cover_url: str = "", insight: str = ""):
-    if not JIJYUN_WEBHOOK_URL:
-        print("⚠️ JIJYUN_WEBHOOK_URL 未配置，跳过", flush=True)
-        return
+def build_wechat_html(text: str, cover_url: str = "", insight: str = "") -> str:
+    """
+    生成推送给集简云（微信公众号）的完整 HTML：
+    封面图 → 深度解读卡片 → 正文（标题加粗）
+    """
+    text = _remove_blank_before_quote(text)
 
-    # 封面图插在正文最前面
+    # 封面图块
     cover_block = ""
     if cover_url:
         cover_block = (
-            f'''<p style="text-align:center;">'''
-            f'''<img src="{cover_url}" style="max-width:100%;border-radius:8px;"/></p>'''
-            f'''<br>'''
+            f'<p style="text-align:center;">'
+            f'<img src="{cover_url}" style="max-width:100%;border-radius:8px;"/></p>'
+            f'<br>'
         )
 
-    # 深度解读区块（排版美化）
+    # 深度解读块（橙色卡片）
     insight_block = ""
     if insight:
         insight_html = insight.replace("\n", "<br>")
         insight_block = (
-            '''<div style="background:#fff8f0;border-left:5px solid #ff6b35;'''
-            '''border-radius:4px;padding:14px 18px;margin:18px 0;">'''
-            '''<p style="margin:0 0 10px 0;font-size:15px;font-weight:bold;color:#ff6b35;">'''
-            '''🔍 深度解读</p>'''
-            f'''<p style="margin:0;font-size:14px;line-height:1.8;color:#333;">{insight_html}</p>'''
-            '''</div><br>'''
+            '<div style="background:#fff8f0;border-left:5px solid #ff6b35;'
+            'border-radius:4px;padding:14px 18px;margin:18px 0;">'
+            '<p style="margin:0 0 10px 0;font-size:15px;'
+            'font-weight:bold;color:#ff6b35;">🔍 深度解读</p>'
+            f'<p style="margin:0;font-size:14px;line-height:1.8;color:#333;">'
+            f'{insight_html}</p>'
+            '</div><br>'
         )
 
     body_html = _md_to_html(text)
-    full_html = cover_block + insight_block + body_html
+    return cover_block + insight_block + body_html
 
+# ════════════════════════════════════════════════════════════════
+# 推送集简云（微信公众号）
+# ════════════════════════════════════════════════════════════════
+def push_to_jijyun(html_content: str, title: str, cover_url: str = ""):
+    if not JIJYUN_WEBHOOK_URL:
+        print("⚠️ JIJYUN_WEBHOOK_URL 未配置，跳过", flush=True)
+        return
     payload = {
         "title":        title,
         "author":       "大尉Prinski",
-        "html_content": full_html,
+        "html_content": html_content,
         "cover_jpg":    cover_url
     }
     resp = requests.post(JIJYUN_WEBHOOK_URL, json=payload, timeout=30)
     print(f"极简云推送：{resp.status_code} | {resp.text[:120]}", flush=True)
-
 
 # ════════════════════════════════════════════════════════════════
 # 提取 @@@START@@@ ... @@@END@@@ 之间的正文
@@ -557,29 +605,24 @@ def extract_markdown_block(text: str) -> str:
     content_start = start + len("@@@START@@@")
     if end != -1 and end > start:
         return text[content_start:end].strip()
-    # @@@END@@@ 缺失（被截断）：取 @@@START@@@ 之后的全部内容
     print("⚠️ @@@END@@@ 未找到，使用 @@@START@@@ 之后的全文兜底", flush=True)
     return text[content_start:].strip()
-
 
 # ════════════════════════════════════════════════════════════════
 # 内容质量检查
 # ════════════════════════════════════════════════════════════════
 def is_valid_content(text: str) -> bool:
-    """判断日报内容是否有效（非空、包含关键标识符、字数足够）"""
     if not text or len(text) < 300:
         return False
-    # @@@END@@@ 可能因截断缺失，不作为硬性要求
     required = ["@@@START@@@", "🍉"]
     return all(kw in text for kw in required)
-
 
 # ════════════════════════════════════════════════════════════════
 # 主流程
 # ════════════════════════════════════════════════════════════════
 def main():
     print("=" * 60, flush=True)
-    print(f"🚀 AI吃瓜日报自动化任务启动", flush=True)
+    print("🚀 AI吃瓜日报自动化任务启动", flush=True)
     print("=" * 60, flush=True)
 
     if not BB_ACCOUNTS:
@@ -592,10 +635,9 @@ def main():
     used_key   = None
 
     for i, acct in enumerate(BB_ACCOUNTS):
-        key = acct["api_key"][-8:]   # 用末8位作为状态字典的 key
+        key = acct["api_key"][-8:]
         print(f"\n[Browserbase] 尝试账号 #{i+1}（...{key}）", flush=True)
 
-        # 检查冷却期
         if is_in_cooldown(bb_state, key):
             info  = bb_state.get(key, {})
             until = info.get("cooldown_until", "")[:10]
@@ -659,7 +701,7 @@ def main():
         # Step 2：开启 Grok 4.20 Beta
         enable_grok4_beta(page)
 
-        # Step 3：阶段 A（第一轮扫描，50个账号前半段）
+        # Step 3：阶段 A
         send_prompt(page, build_prompt_a(), "阶段A", "03_stage_a")
         print("[阶段A] ⏳ 强制等待 50s，确保 Grok 工具调用完成...", flush=True)
         time.sleep(50)
@@ -667,7 +709,7 @@ def main():
                          interval=3, stable_rounds=4, max_wait=120,
                          extend_if_growing=True, min_len=100)
 
-        # Step 4：阶段 B（第二轮扫描 + 成稿）
+        # Step 4：阶段 B
         send_prompt(page, build_prompt_b(), "阶段B", "04_stage_b")
         print("[阶段B] ⏳ 强制等待 60s，等待工具调用启动...", flush=True)
         time.sleep(60)
@@ -676,16 +718,15 @@ def main():
                                       extend_if_growing=True, min_len=1000)
         print(f"\n阶段B 内容长度：{len(raw_b_text)} 字符", flush=True)
 
-        # Step 5：阶段 C（标题 + 封面图提示词）
+        # Step 5：阶段 C
         send_prompt(page, build_prompt_c(), "阶段C", "05_stage_c")
         cover_raw = wait_and_extract(page, "阶段C", "05_stage_c",
                                      interval=3, stable_rounds=3, max_wait=60,
                                      extend_if_growing=False)
 
-        # 解析 TITLE / PROMPT
-        title_match   = re.search(r"TITLE[:：]\s*(.+)", cover_raw)
+        title_match   = re.search(r"TITLE[:：]\s*(.+)",            cover_raw)
         prompt_match  = re.search(r"PROMPT[:：]\s*([\s\S]+?)(?=INSIGHT[:：]|$)", cover_raw)
-        insight_match = re.search(r"INSIGHT[:：]\s*([\s\S]+)", cover_raw)
+        insight_match = re.search(r"INSIGHT[:：]\s*([\s\S]+)",     cover_raw)
         cover_title_c = title_match.group(1).strip()   if title_match   else ""
         cover_prompt  = prompt_match.group(1).strip()  if prompt_match  else ""
         cover_insight = insight_match.group(1).strip() if insight_match else ""
@@ -700,7 +741,6 @@ def main():
         browser.close()
 
     # ── 内容质量守卫 ─────────────────────────────────────────────
-    # 始终用 raw_b_text 做质量判断（最完整），extract 结果仅用于推送
     if not is_valid_content(raw_b_text):
         print("\n❌ 日报内容质量不达标（内容过短或缺少标识符），终止推送。", flush=True)
         print(f"   原始内容前200字：{raw_b_text[:200]}", flush=True)
@@ -708,32 +748,34 @@ def main():
 
     final_markdown = extract_markdown_block(raw_b_text)
     if not final_markdown:
-        final_markdown = raw_b_text   # 实在提取不到定界符，用全文兜底
+        final_markdown = raw_b_text
 
     # ── Step 6：硅基流动生图 ────────────────────────────────────
     cover_url = generate_cover_image(cover_prompt)
     download_image(cover_url, "cover.png")
 
-    # ── Step 7：标题（优先阶段C动态标题，fallback 正文标题）────
+    # ── Step 7：标题 ────────────────────────────────────────────
     if cover_title_c:
         title = cover_title_c
     else:
-        title_match = re.search(r'AI圈极客吃瓜日报[^\n]*', final_markdown)
+        title_match = re.search(r'昨夜，X上[^\n]*', final_markdown)
         title = title_match.group(0).strip() if title_match else "AI圈极客吃瓜日报"
     print(f"\n标题：{title}", flush=True)
 
-    # ── Step 8：上传封面图到路过图床 ────────────────────────────
-    imgse_url       = upload_to_imgbb("cover.png")
-    final_cover_url = imgse_url if imgse_url else cover_url
+    # ── Step 8：上传封面图到 ImgBB ──────────────────────────────
+    imgbb_url       = upload_to_imgbb("cover.png")
+    final_cover_url = imgbb_url if imgbb_url else cover_url
     print(f"封面图最终 URL：{final_cover_url[:80] if final_cover_url else '无'}", flush=True)
 
-    # ── Step 9：推送飞书 ─────────────────────────────────────────
+    # ── Step 9：推送飞书（interactive 卡片）────────────────────
     print("\n推送飞书...", flush=True)
-    push_to_feishu(final_markdown)
+    feishu_card = build_feishu_card(final_markdown, title, final_cover_url, cover_insight)
+    push_to_feishu(feishu_card)
 
-    # ── Step 10：推送极简云（微信公众号）───────────────────────
+    # ── Step 10：推送极简云（微信公众号）──────────────────────
     print("推送极简云...", flush=True)
-    push_to_jijyun(final_markdown, title, final_cover_url, cover_insight)
+    wechat_html = build_wechat_html(final_markdown, final_cover_url, cover_insight)
+    push_to_jijyun(wechat_html, title, final_cover_url)
 
     print("\n🎉 全部完成！", flush=True)
 
