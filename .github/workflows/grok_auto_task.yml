@@ -1,55 +1,66 @@
-name: Grok每日AI吃瓜日报
+name: AI吃瓜日报自动发布
 
 on:
   schedule:
-    - cron: '0 2 * * *'
+    # 每天北京时间 07:00 触发（UTC 23:00 前一天）
+    - cron: "0 23 * * *"
   workflow_dispatch:
 
 jobs:
-  run-grok-auto-task:
+  run-grok:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
+    permissions:
+      contents: write    # 允许提交 bb_state.json 回仓库
 
     steps:
-      - name: 检出代码
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: 设置 Python 3.12
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.11"
 
-      - name: 安装依赖
+      - name: Install dependencies
         run: |
+          pip install --upgrade pip
           pip install browserbase playwright requests
           playwright install chromium --with-deps
 
-      - name: 运行 Grok 主任务
+      - name: Run grok_auto_task
         env:
-          BROWSERBASE_API_KEY:    ${{ secrets.BROWSERBASE_API_KEY }}
-          BROWSERBASE_PROJECT_ID: ${{ secrets.BROWSERBASE_PROJECT_ID }}
-          BROWSERBASE_CONTEXT_ID: ${{ secrets.BROWSERBASE_CONTEXT_ID }}
-          JIJYUN_WEBHOOK_URL:     ${{ secrets.JIJYUN_WEBHOOK_URL }}
-          FEISHU_WEBHOOK_URL:     ${{ secrets.FEISHU_WEBHOOK_URL }}
-          XAI_API_KEY:            ${{ secrets.XAI_API_KEY }}
+          BROWSERBASE_API_KEY:      ${{ secrets.BROWSERBASE_API_KEY }}
+          BROWSERBASE_PROJECT_ID:   ${{ secrets.BROWSERBASE_PROJECT_ID }}
+          BROWSERBASE_CONTEXT_ID:   ${{ secrets.BROWSERBASE_CONTEXT_ID }}
+          BROWSERBASE_API_KEY_2:    ${{ secrets.BROWSERBASE_API_KEY_2 }}
+          BROWSERBASE_PROJECT_ID_2: ${{ secrets.BROWSERBASE_PROJECT_ID_2 }}
+          BROWSERBASE_CONTEXT_ID_2: ${{ secrets.BROWSERBASE_CONTEXT_ID_2 }}
+          BROWSERBASE_API_KEY_3:    ${{ secrets.BROWSERBASE_API_KEY_3 }}
+          BROWSERBASE_PROJECT_ID_3: ${{ secrets.BROWSERBASE_PROJECT_ID_3 }}
+          BROWSERBASE_CONTEXT_ID_3: ${{ secrets.BROWSERBASE_CONTEXT_ID_3 }}
+          JIJYUN_WEBHOOK_URL:       ${{ secrets.JIJYUN_WEBHOOK_URL }}
+          FEISHU_WEBHOOK_URL:       ${{ secrets.FEISHU_WEBHOOK_URL }}
+          SF_API_KEY:               ${{ secrets.SF_API_KEY }}
         run: python grok_auto_task.py
 
-      - name: 上传调试截图与封面图
+      # 无论成败，把账号状态文件提交回仓库（记录冷却信息）
+      - name: Save account state
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bb_state.json || true
+          git diff --cached --quiet || git commit -m "chore: update bb_state [skip ci]"
+          git push || true
+
+      - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-artifacts
+          name: screenshots-${{ github.run_number }}
           path: |
-            00_opened.png
-            01_model_menu.png
-            02_model_confirmed.png
-            03_stage_a_before.png
-            03_stage_a_done.png
-            03_stage_a_timeout.png
-            04_stage_b_before.png
-            04_stage_b_done.png
-            04_stage_b_timeout.png
-            05_stage_c_before.png
-            05_stage_c_done.png
-            cover.png
+            *.png
+            *.jpg
+          retention-days: 7
           if-no-files-found: ignore
