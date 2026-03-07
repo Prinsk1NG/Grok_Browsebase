@@ -42,6 +42,7 @@ jobs:
           JIJYUN_WEBHOOK_URL:       ${{ secrets.JIJYUN_WEBHOOK_URL }}
           FEISHU_WEBHOOK_URL:       ${{ secrets.FEISHU_WEBHOOK_URL }}
           SF_API_KEY:               ${{ secrets.SF_API_KEY }}
+          IMGBB_API_KEY:            ${{ secrets.IMGBB_API_KEY }}
         run: python grok_auto_task.py
 
       # 无论成败，把账号状态文件提交回仓库（记录冷却信息）
